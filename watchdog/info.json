@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Watchdog",
+    "SHORT" : "Interacts with a systemd watchdog to ensure bot is up and connected at all times.",
+    "DESCRIPTION" : "This cog is for linux systems with a systemd init.\nUse the included service template to run Red with the required watchdog settings.\nThis cog will interface with systemd and 'pet' the watchdog each time it recieves a heartbeat from Discord. This is to ensure a working and authenticated websocket connection.\nIf the watchdog times out, Red is restarted automatically."
+}
