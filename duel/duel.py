@@ -261,6 +261,7 @@ class Duels:
             await self.bot.say("There are no scores registered in this server. Start fighting!")
 
     @commands.command(name="duel", pass_context=True, no_pm=True)
+    @commands.cooldown(2, 60, commands.BucketType.user)
     async def _duel(self, ctx, user: discord.Member=None):
         """Duel another player"""
         if not user:
