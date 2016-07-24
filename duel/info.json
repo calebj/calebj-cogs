@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Duel",
+    "SHORT" : "Makes two users duel each other, with randomized moves and score tracking.",
+    "DESCRIPTION" : ""
+}
