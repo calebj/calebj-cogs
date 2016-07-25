@@ -302,7 +302,7 @@ class Duels:
             else:
                 for p in [p1, p2]:
                     p.draws += 1
-                msg = 'After %d rounds, the duel ends in a tie!' % i+1
+                msg = 'After %d rounds, the duel ends in a tie!' % (i+1)
 
             # append stats
             msg += '\nStats: '
