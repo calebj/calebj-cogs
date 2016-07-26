@@ -2,6 +2,6 @@
     "AUTHOR" : "CalebJ",
     "INSTALL_MSG" : "Done.",
     "NAME" : "Mute",
-    "SHORT" : "Adds a 'Mute' role when called, and removes it after a specified time.",
-    "DESCRIPTION" : "Adds a 'Mute' role when called, and removes it after a specified time. An optional reason may be specified, and is repeated at the end of the mute duration."
+    "SHORT" : "Adds a 'Mute' role to a user when called, and removes it after a specified time.",
+    "DESCRIPTION" : "Adds a 'Mute' role to a user when called, and removes it after a specified time. An optional reason may be specified, and is repeated at the end of the mute duration. If the Mute role doesn't exist, it will be created automatically with the 'send messages' and 'speak' permissions disabled."
 }
