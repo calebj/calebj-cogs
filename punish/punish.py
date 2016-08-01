@@ -208,6 +208,8 @@ class Punish:
         """Remove scheduled unpunish when manually removed"""
         sid = before.server.id
         role = discord.utils.get(before.server.roles, name=self.role_name)
+        if not (sid in self.json and before.id in self.json[sid]):
+            return
         if role and role in before.roles and role not in after.roles:
             reason = 'punishment manually ended early by moderator/admin.\n'
             if 'reason' in self.json[sid][before.id]:
@@ -221,7 +223,7 @@ class Punish:
         role = discord.utils.get(member.server.roles, name=self.role_name)
         if role:
             self.json = dataIO.load_json(self.location)
-            if sid not in self.json:
+            if not (sid in self.json and member.id in self.json[sid]):
                 return
             duration = self.json[sid][member.id]['until'] - time.time()
             if duration > 0:
