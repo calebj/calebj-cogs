@@ -120,8 +120,14 @@ class Punish:
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def unpunish(self, ctx, user: discord.Member):
-        """Removes punishment from a user"""
-        await self._unpunish(user)
+        """Removes punishment from a user. Same as removing the role directly"""
+        role = discord.utils.get(user.server.roles, name=self.role_name)
+        sid = user.server.id
+        if role and role in user.roles:
+            reason = 'Punishment manually ended early by %s. ' % ctx.message.author
+            if 'reason' in self.json[sid][user.id]:
+                reason += self.json[sid][user.id]['reason']
+            await self._unpunish(user, reason)
 
     async def on_load(self):
         """Called when bot is ready and each time cog is (re)loaded"""
@@ -133,8 +139,10 @@ class Punish:
                 duration = data['until'] - time.time()
                 member = discord.utils.get(server.members, id=member)
                 if duration < 0:
-                    await self.bot.remove_roles(member, role)
-                    self._unpunish_data(member)
+                    reason = 'Punishment removal overdue, maybe bot was offline. '
+                    if 'reason' in self.json[server.id][member.id]:
+                        reason += self.json[server.id][member.id]['reason']
+                    self._unpunish(member, reason)
                 else:
                     await self.bot.add_roles(member, role)
                     self.schedule_unpunish(duration, member)
@@ -151,7 +159,7 @@ class Punish:
             self.handles[sid][member.id].cancel()
         self.handles[sid][member.id] = handle
 
-    def _unpunish_cb(self, member, reason):
+    def _unpunish_cb(self, member, reason=None):
         """Regular function to be used as unpunish callback"""
         def wrap(member, reason):
             return self._unpunish(member, reason)
@@ -162,7 +170,7 @@ class Punish:
         role = discord.utils.get(member.server.roles, name=self.role_name)
         if role:
             await self.bot.remove_roles(member, role)
-            msg = "Your punishiment in %s has ended." % member.server.name
+            msg = 'Your punishiment in %s has ended.' % member.server.name
             if reason:
                 msg += "\nReason was: %s" % reason
             await self.bot.send_message(member, msg)
@@ -184,6 +192,8 @@ class Punish:
 
     async def on_channel_create(self, c, role=None):
         """Run when new channels are created and set up role permissions"""
+        if c.is_private:
+            return
         perms = discord.PermissionOverwrite()
         if c.type == discord.ChannelType.text:
             perms.send_messages = False
@@ -196,8 +206,13 @@ class Punish:
 
     async def on_member_update(self, before, after):
         """Remove scheduled unpunish when manually removed"""
+        sid = before.server.id
         role = discord.utils.get(before.server.roles, name=self.role_name)
         if role and role in before.roles and role not in after.roles:
+            reason = 'punishment manually ended early by moderator/admin.\n'
+            if 'reason' in self.json[sid][before.id]:
+                reason += self.json[sid][before.id]['reason']
+            await self.bot.send_message(after, reason)
             self._unpunish_data(after)
 
     async def on_member_join(self, member):
