@@ -299,15 +299,15 @@ class Duels:
                 loser.losses += 1
                 msg = 'After %d rounds, %s wins with %d HP!' % (
                     i+1, victor.mention, victor.hp)
+                msg += '\nStats: '
+                for p, delim in [(victor, '; '), (loser, '.')]:
+                    msg += '%s has %d wins, %d losses, %d draws%s' % (p, p.wins, p.losses, p.draws, delim)
             else:
                 for p in [p1, p2]:
                     p.draws += 1
                 msg = 'After %d rounds, the duel ends in a tie!' % (i+1)
 
             # append stats
-            msg += '\nStats: '
-            for p, delim in [(victor, '; '), (loser, '.')]:
-                msg += '%s has %d wins, %d losses, %d draws%s' % (p, p.wins, p.losses, p.draws, delim)
             await self.bot.say(msg)
 
     def generate_action(self, attacker, defender, move_cat=None):
