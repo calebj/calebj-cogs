@@ -15,7 +15,7 @@ log = logging.getLogger('red.punish')
 
 TIMESPEC_TRANSLATE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
 DEFAULT_TIMEOUT = '30m'
-PURGE_MESSAGES = 1 # for cpunish
+PURGE_MESSAGES = 1  # for cpunish
 
 
 def _parse_time(time):
@@ -89,7 +89,9 @@ class Punish:
         # schedule callback for role removal
         self.schedule_unpunish(duration, user, reason)
 
-        is_user = lambda m: (m == ctx.message or m.author == user)
+        def is_user(m):
+            return m == ctx.message or m.author == user
+
         try:
             await self.bot.purge_from(ctx.message.channel, limit=PURGE_MESSAGES+1, check=is_user)
             await self.bot.delete_message(ctx.message)
@@ -151,14 +153,17 @@ class Punish:
                 return None
             else:
                 msg = "The %s role doesn't exist; Creating it now... " % self.role_name
-                if not quiet: msgobj = await self.bot.reply(msg)
+                if not quiet:
+                    msgobj = await self.bot.reply(msg)
                 log.debug('Creating punish role')
                 perms = discord.Permissions.none()
                 role = await self.bot.create_role(server, name=self.role_name, permissions=perms)
-                if not quiet: msgobj = await self.bot.edit_message(msgobj, msgobj.content + 'configuring channels... ')
+                if not quiet:
+                    msgobj = await self.bot.edit_message(msgobj, msgobj.content + 'configuring channels... ')
                 for c in server.channels:
                     await self.on_channel_create(c, role)
-                if not quiet: await self.bot.edit_message(msgobj, msgobj.content + 'done.')
+                if not quiet:
+                    await self.bot.edit_message(msgobj, msgobj.content + 'done.')
         return role
 
     @commands.command(pass_context=True, no_pm=True)
@@ -213,12 +218,13 @@ class Punish:
         """Remove punish role, delete record and task handle"""
         role = discord.utils.get(member.server.roles, name=self.role_name)
         if role:
+            # Has to be done first to prevent triggering on_member_update listener
+            self._unpunish_data(member)
             await self.bot.remove_roles(member, role)
             msg = 'Your punishiment in %s has ended.' % member.server.name
             if reason:
                 msg += "\nReason was: %s" % reason
             await self.bot.send_message(member, msg)
-        self._unpunish_data(member)
 
     def _unpunish_data(self, member):
         """Removes punish data entry and cancels any present callback"""
@@ -255,10 +261,10 @@ class Punish:
         if not (sid in self.json and before.id in self.json[sid]):
             return
         if role and role in before.roles and role not in after.roles:
-            reason = 'punishment manually ended early by moderator/admin.\n'
+            msg = 'Your punishiment in %s was ended early by a moderator/admin.' % before.server.name
             if 'reason' in self.json[sid][before.id]:
-                reason += self.json[sid][before.id]['reason']
-            await self.bot.send_message(after, reason)
+                msg += '\nReason was: ' + self.json[sid][before.id]['reason']
+            await self.bot.send_message(after, msg)
             self._unpunish_data(after)
 
     async def on_member_join(self, member):
