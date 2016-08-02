@@ -15,6 +15,7 @@ log = logging.getLogger('red.punish')
 
 TIMESPEC_TRANSLATE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
 DEFAULT_TIMEOUT = '30m'
+PURGE_MESSAGES = 1 # for cpunish
 
 
 def _parse_time(time):
@@ -58,31 +59,55 @@ class Punish:
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
+    async def cpunish(self, ctx, user: discord.Member, duration: str=None, *, reason: str=None):
+        """Same as punish but cleans up after itself and the target"""
+        server = ctx.message.server
+        role = await self.setup_role(server, quiet=True)
+        if not role:
+            return
+
+        self.json = dataIO.load_json(self.location)
+        if server.id not in self.json:
+            self.json[server.id] = {}
+
+        if not duration:
+            duration = DEFAULT_TIMEOUT
+        duration = _parse_time(duration)
+        timestamp = time.time() + duration
+
+        if server.id not in self.json:
+            self.json[server.id] = {}
+
+        self.json[server.id][user.id] = {'until': timestamp}
+        self.json[server.id][user.id]['by'] = ctx.message.author.id
+        if reason:
+            self.json[server.id][user.id]['reason'] = reason
+
+        await self.bot.add_roles(user, role)
+        dataIO.save_json(self.location, self.json)
+
+        # schedule callback for role removal
+        self.schedule_unpunish(duration, user, reason)
+
+        is_user = lambda m: (m == ctx.message or m.author == user)
+        try:
+            await self.bot.purge_from(ctx.message.channel, limit=PURGE_MESSAGES+1, check=is_user)
+            await self.bot.delete_message(ctx.message)
+        except discord.errors.Forbidden:
+            await self.bot.send_message(ctx.message.channel, "Punishment set, but I need"
+                "permissions to manage messages to clean up.")
+
+    @commands.command(pass_context=True, no_pm=True)
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish(self, ctx, user: discord.Member, duration: str=None, *, reason: str=None):
         """Puts a user into timeout for a specified time period, with an optional reason.
         Time specification is any combination of number with the units s,m,h,d.
         Example: !punish @idiot 1.1h10m Enough bitching already!"""
 
         server = ctx.message.server
-
-        # --- CREATING ROLE ---
-        server = user.server
-        role = discord.utils.get(user.server.roles, name=self.role_name)
-        if not role:
-            if not (any(r.permissions.manage_roles for r in server.me.roles) and
-                    any(r.permissions.manage_channels for r in server.me.roles)):
-                await self.bot.say("The Manage Roles and Manage Channels permissions are required to use this command.")
-                return
-            else:
-                msg = "The %s role doesn't exist; Creating it now... " % self.role_name
-                msgobj = await self.bot.reply(msg)
-                log.debug('Creating punish role')
-                perms = discord.Permissions.none()
-                role = await self.bot.create_role(server, name=self.role_name, permissions=perms)
-                await self.bot.edit_message(msgobj, msgobj.content + 'configuring channels... ')
-                for c in server.channels:
-                    await self.on_channel_create(c, role)
-                await self.bot.edit_message(msgobj, msgobj.content + 'done.')
+        role = await self.setup_role(server)
+        if role is None:
+            return
 
         self.json = dataIO.load_json(self.location)
         if server.id not in self.json:
@@ -116,6 +141,25 @@ class Punish:
         self.schedule_unpunish(duration, user, reason)
 
         await self.bot.say(msg)
+
+    async def setup_role(self, server, quiet=False):
+        role = discord.utils.get(server.roles, name=self.role_name)
+        if not role:
+            if not (any(r.permissions.manage_roles for r in server.me.roles) and
+                    any(r.permissions.manage_channels for r in server.me.roles)):
+                await self.bot.say("The Manage Roles and Manage Channels permissions are required to use this command.")
+                return None
+            else:
+                msg = "The %s role doesn't exist; Creating it now... " % self.role_name
+                if not quiet: msgobj = await self.bot.reply(msg)
+                log.debug('Creating punish role')
+                perms = discord.Permissions.none()
+                role = await self.bot.create_role(server, name=self.role_name, permissions=perms)
+                if not quiet: msgobj = await self.bot.edit_message(msgobj, msgobj.content + 'configuring channels... ')
+                for c in server.channels:
+                    await self.on_channel_create(c, role)
+                if not quiet: await self.bot.edit_message(msgobj, msgobj.content + 'done.')
+        return role
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
