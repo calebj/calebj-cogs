@@ -1,7 +1,7 @@
 {
         "AUTHOR" : "@calebj#7377",
-        "INSTALL_MSG" : "Thanks for adding my repo! If you need any help, ping me in the Red support server!",
+        "INSTALL_MSG" : "Thanks for adding my repo! If you need any help, ping me in the Red support server!\nIf my work has made your life easier, consider becoming a patron at <https://www.patreon.com/calebj>",
         "NAME" : "calebj-cogs",
-        "SHORT" : "This is where I keep my cogs, I guess.",
-        "DESCRIPTION" : "This is where I put my cogs for Red. I hope you find them useful."
+        "SHORT" : "General, fun and utility cogs.",
+        "DESCRIPTION" : "This is where I put my cogs for Red. I hope you find them useful!"
 }
