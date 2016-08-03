@@ -5,11 +5,11 @@
 import discord
 from discord.ext import commands
 from .utils.dataIO import dataIO
-from __main__ import send_cmd_help
 import random
 import os
 import logging
 import asyncio
+from .utils.chat_formatting import pagify
 
 # Constants
 MAX_ROUNDS = 4
@@ -19,9 +19,10 @@ TARGET_OTHER = 'target'
 TARGET_OTHER_BLOCKABLE = 'blockable'
 TARGET_OTHER_MISSABLE = 'missable'
 
-DATA_PATH = "data/duels/"
+DATA_PATH = "data/duel/"
 JSON_PATH = DATA_PATH + "duelist.json"
 LOG_PATH = DATA_PATH + "duelist.log"
+
 
 def indicatize(d):
     result = {}
@@ -38,32 +39,32 @@ def indicatize(d):
 # {v} is the verb associated with that object, and {b} is a random body part.
 
 WEAPONS = {'swing': {
-                'axe': 3,
-                'scimitar': 4,
-                'buzzsaw': 5,
-                'chainsaw': 6,
-                'broadsword': 7,
-                'katana': 4,
-                'falchion': 5
-                },
-           'fire': {
-               'raygun': 5
-               },
-           'hurl': {
-               'spear': 6,
-               'naginata': 5,
-               'lance': 4
-               }
-           }
+    'axe': 3,
+    'scimitar': 4,
+    'buzzsaw': 5,
+    'chainsaw': 6,
+    'broadsword': 7,
+    'katana': 4,
+    'falchion': 5
+},
+    'fire': {
+    'raygun': 5
+},
+    'hurl': {
+    'spear': 6,
+    'naginata': 5,
+    'lance': 4
+}
+}
 
 
 MELEE = {'stab': {
-            'dagger': 5
-            },
-         'drive': {
-            'fist': 4
-            }
-        }
+    'dagger': 5
+},
+    'drive': {
+    'fist': 4
+}
+}
 
 MARTIAL = {'roundhouse kick': 6,
            'uppercut': 5,
@@ -87,32 +88,32 @@ CRITICAL = {"Quicker than the eye can follow, {a} delivers a devastating blow wi
             "{a} nails {d} in the {b} with their {o}! Critical hit!": WEAPONS}
 
 HEALS = {'inject': {
-                'morphine': 4,
-                'nanomachines': 5
-             },
-            'munch': {
-                'on some': {
-                    'cake': 5,
-                    'cat food':3,
-                    'dog food': 4
-                    },
-                'on a': {
-                    'waffle': 4
-                }
-            },
+    'morphine': 4,
+    'nanomachines': 5
+},
+    'munch': {
+    'on some': {
+        'cake': 5,
+        'cat food': 3,
+        'dog food': 4
+    },
+    'on a': {
+        'waffle': 4
+    }
+},
 
-            'drink': {
-                'some': {
-                    'Ambrosia':7
-                },
-                'a': {
-                    'generic hp potion': 5
-                },
-                'an': {
-                    'elixir': 5
-                }
-            }
-        }
+    'drink': {
+    'some': {
+        'Ambrosia': 7
+    },
+    'a': {
+        'generic hp potion': 5
+    },
+    'an': {
+        'elixir': 5
+    }
+}
+}
 
 HEAL = {"{a} decides to {v} {o} instead of attacking.": HEALS,
         "{a} calls a timeout and {v} {o}.": indicatize(HEALS),
@@ -127,6 +128,8 @@ FUMBLE = {"{a} closes in on {d}, but suddenly remembers a funny joke and laughs 
 
 BOT = {"{a} charges its laser aaaaaaaand... BZZZZZZT! {d} is now a smoking crater for daring to challenge the bot.": INITIAL_HP}
 
+BOT_PROTECT = {"{a} attacks {d}, but the bot intervenes!": INITIAL_HP}
+
 HITS = ['deals', 'hits for']
 RECOVERS = ['recovers', 'gains', 'heals']
 
@@ -137,13 +140,15 @@ MOVES = {'CRITICAL': (CRITICAL, TARGET_OTHER, -2),
          'ATTACK': (ATTACK, TARGET_OTHER, -1),
          'FUMBLE': (FUMBLE, TARGET_SELF, -1),
          'HEAL': (HEAL, TARGET_SELF, 1),
-         'BOT': (BOT, TARGET_OTHER, -64)}
+         'BOT': (BOT, TARGET_OTHER, -64),
+         'BOT_PROTECT': (BOT_PROTECT, TARGET_SELF, -64)}
 
 # Weights of distribution for biased selection of moves
 WEIGHTED_MOVES = {'CRITICAL': 0.05, 'ATTACK': 1, 'FUMBLE': 0.1, 'HEAL': 0.1}
 
 
 class Player:
+
     def __init__(self, cog, member, initial_hp=INITIAL_HP):
         self.hp = initial_hp
         self.member = member
@@ -170,6 +175,7 @@ class Player:
     @property
     def wins(self):
         return self._get_stat('wins')
+
     @wins.setter
     def wins(self, num):
         self._set_stat('wins', num)
@@ -177,6 +183,7 @@ class Player:
     @property
     def losses(self):
         return self._get_stat('losses')
+
     @losses.setter
     def losses(self, num):
         self._set_stat('losses', num)
@@ -184,15 +191,17 @@ class Player:
     @property
     def draws(self):
         return self._get_stat('draws')
+
     @draws.setter
     def draws(self, num):
         self._set_stat('draws', num)
 
 
-class Duels:
+class Duel:
+
     def __init__(self, bot):
         self.bot = bot
-        self.duelists = dataIO.load_json("data/duels/duelist.json")
+        self.duelists = dataIO.load_json("data/duel/duelist.json")
 
     def _set_stats(self, user, stats):
         userid = user.member.id
@@ -212,16 +221,74 @@ class Duels:
         else:
             return self.duelists[serverid][userid]
 
+    @commands.command(name="protect", pass_context=True)
+    async def _protect(self, ctx, user: discord.Member=None):
+        """Adds a member to the protected members list"""
+        server = ctx.message.server
+        if user is None:
+            await self.bot.say("Specify a user to add to the protection list.")
+        else:
+            duelists = self.duelists.get(server.id, {})
+            member_list = duelists.get("protected", [])
+            name = user.display_name
+            if user.id in member_list:
+                await self.bot.say("%s is already in the protection list "
+                                   % name)
+            else:
+                member_list.append(user.id)
+                duelists['protected'] = member_list
+                self.duelists[server.id] = duelists
+                dataIO.save_json(JSON_PATH, self.duelists)
+                await self.bot.say("%s has been successfully added to the "
+                                   "protection list." % name)
+
+    @commands.command(name="unprotect", pass_context=True)
+    async def _unprotect(self, ctx, user: discord.Member=None):
+        """Removes a member from the duel protection list"""
+        server = ctx.message.server
+        if user is None:
+            await self.bot.say("Specify a user to remove from the protection "
+                               "list.")
+        else:
+            duelists = self.duelists.get(server.id, {})
+            member_list = duelists.get("protected", [])
+            name = user.display_name
+            if user.id not in member_list:
+                await self.bot.say("%s is not currently in the protection "
+                                   "list." % name)
+            else:
+                self.duelists[server.id]["protected"].remove(user.id)
+                dataIO.save_json(JSON_PATH, self.duelists)
+                await self.bot.say("%s has been successfully removed from the "
+                                   "list." % name)
+
+    @commands.command(name="protected", pass_context=True, aliases=['protection'])
+    async def _protection(self, ctx):
+        """Displays the duel protection list"""
+        server = ctx.message.server
+        duelists = self.duelists.get(server.id, {})
+        member_list = duelists.get("protected", [])
+        member_list = map(server.get_member, member_list)
+        name_list = map(lambda m: m.display_name, member_list)
+        if name_list:
+            name_list = ["**Protected users:**"] + sorted(name_list)
+            delim = '\n'
+            for page in pagify(delim.join(name_list), delims=[delim]):
+                await self.bot.say(page)
+        else:
+            await self.bot.say("Currently the list is empty, add more people "
+                               "with `%sprotect` first." % ctx.prefix)
+
     @commands.command(name="duels", pass_context=True)
     @commands.cooldown(2, 60, commands.BucketType.user)
-    async def _duels(self, ctx, top : int=10):
+    async def _duels(self, ctx, top: int=10):
         """Shows the duel leaderboard, defaults to top 10"""
         server = ctx.message.server
         if top < 1:
             top = 10
         if server.id in self.duelists:
             def sort_wins(kv):
-                _,v = kv
+                _, v = kv
                 return v['wins'] - v['losses']
 
             duels_sorted = sorted(self.duelists[server.id].items(), key=sort_wins,
@@ -231,30 +298,28 @@ class Duels:
             topten = duels_sorted[:top]
             highscore = ""
             place = 1
-            members = {uid: server.get_member(uid) for uid, _ in topten} # only look up once each
+            members = {uid: server.get_member(uid) for uid, _ in topten}  # only look up once each
             names = {uid: m.nick if m.nick else m.name for uid, m in members.items()}
             max_name_len = max([len(n) for n in names.values()])
 
             # header
-            highscore += '#'.ljust(len(str(top))+1) # pad to digits in longest number
+            highscore += '#'.ljust(len(str(top)) + 1)  # pad to digits in longest number
             highscore += 'Name'.ljust(max_name_len + 4)
             for stat in ['wins', 'losses', 'draws']:
                 highscore += stat.ljust(8)
             highscore += '\n'
 
             for uid, stats in topten:
-                member = members[uid]
-                highscore += str(place).ljust(len(str(top))+1) # pad to digits in longest number
+                highscore += str(place).ljust(len(str(top)) + 1)  # pad to digits in longest number
                 highscore += names[uid].ljust(max_name_len + 4)
                 for stat in ['wins', 'losses', 'draws']:
                     val = stats[stat]
-                    #highscore += '{}:'.format(stat).ljust(8)
                     highscore += '{}'.format(val).ljust(8)
                 highscore += "\n"
                 place += 1
             if highscore:
                 if len(highscore) < 1985:
-                    await self.bot.say("```py\n"+highscore+"```")
+                    await self.bot.say("```py\n" + highscore + "```")
                 else:
                     await self.bot.say("The leaderboard is too big to be displayed. Try with a lower <top> parameter.")
         else:
@@ -268,6 +333,7 @@ class Duels:
             await self.bot.reply("please mention a user to duel with!")
         else:
             author = ctx.message.author
+            server = ctx.message.server
             p1 = Player(self, author)
             p2 = Player(self, user)
             if user == author:
@@ -287,6 +353,8 @@ class Duels:
                         break
                     if attacker.member == ctx.message.server.me:
                         msg = self.generate_action(attacker, defender, 'BOT')
+                    elif defender.member.id in self.duelists[server.id]["protected"]:
+                        msg = self.generate_action(attacker, defender, 'BOT_PROTECT')
                     else:
                         msg = self.generate_action(attacker, defender)
                     await self.bot.say(msg)
@@ -298,14 +366,14 @@ class Duels:
                 victor.wins += 1
                 loser.losses += 1
                 msg = 'After %d rounds, %s wins with %d HP!' % (
-                    i+1, victor.mention, victor.hp)
+                    i + 1, victor.mention, victor.hp)
                 msg += '\nStats: '
                 for p, delim in [(victor, '; '), (loser, '.')]:
                     msg += '%s has %d wins, %d losses, %d draws%s' % (p, p.wins, p.losses, p.draws, delim)
             else:
                 for p in [p1, p2]:
                     p.draws += 1
-                msg = 'After %d rounds, the duel ends in a tie!' % (i+1)
+                msg = 'After %d rounds, the duel ends in a tie!' % (i + 1)
 
             # append stats
             await self.bot.say(msg)
@@ -388,10 +456,12 @@ def dict_weight(d, top=True):
 
 
 def check_folders():
+    if os.path.exists("data/duels/"):
+        os.rename("data/duels/", DATA_PATH)
     if not os.path.exists(DATA_PATH):
-        print("Creating data/duels folder...")
+        print("Creating data/duel folder...")
         os.mkdir(DATA_PATH)
-		
+
 
 def check_files():
     if not dataIO.is_valid_json(JSON_PATH):
@@ -403,9 +473,9 @@ def setup(bot):
     global logger
     check_folders()
     check_files()
-    n = Duels(bot)
-    logger = logging.getLogger("red.duels")
-    if logger.level == 0: # Prevents the logger from being loaded again in case of module reload
+    n = Duel(bot)
+    logger = logging.getLogger("red.duel")
+    if logger.level == 0:  # Prevents the logger from being loaded again in case of module reload
         logger.setLevel(logging.INFO)
         handler = logging.FileHandler(filename=LOG_PATH, encoding='utf-8', mode='a')
         handler.setFormatter(logging.Formatter('%(asctime)s %(message)s', datefmt="[%d/%m/%Y %H:%M]"))
