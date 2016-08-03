@@ -92,7 +92,8 @@ class ReCensor:
         for c in self.regexen[server.id]:
             if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
                 if c == ALL_CHANNELS:
-                    table += '\nServer-wide:\n'
+                    if self._re_present(ALL_CHANNELS):
+                        table += '\nServer-wide:\n'
                 else:
                     if not channel:
                         channel = self.bot.get_channel(c)
@@ -107,7 +108,7 @@ class ReCensor:
     async def _add(self, ctx, pattern: str, mode: str=MODE_INCLUSIVE, channel: discord.Channel=None):
         """Adds a pattern to filter messages. Mods, bot admins, and the bot's
         owner are not subjected to the filter.
-        If the pattern contains spaces, it must be put in double quotes.
+        If the pattern contains spaces, it must be put in double quotes. Single quotes will not work.
 
         mode is one of:
         incl: Default, filter messages that match the pattern
@@ -123,8 +124,13 @@ class ReCensor:
         if server.id not in self.regexen:
             self.regexen[server.id] = {}
 
+        if pattern.startswith("'"):
+            await self.bot.say("Patterns cannot be specified within single quotes.")
+            return
+
         if mode not in MODES:
-            self.bot.reply('"%s" is not a valid mode. You must specify one of `%s`.') % (mode, '`, `'.join(MODES))
+            await self.bot.say('"%s" is not a valid mode. You must specify one of `%s`.' % (mode, '`, `'.join(MODES)))
+            return
         if mode == MODE_EXCLUSIVE:
             if ALL_CHANNELS in self._ls_excl(server):
                 await self.bot.say("There is already a server-wide exclusive filter. Remove or disable it first.")
@@ -164,7 +170,8 @@ class ReCensor:
         for c in self.regexen[server.id]:
             if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
                 if c == ALL_CHANNELS:
-                    table += '\nServer-wide:\n'
+                    if self._re_present(ALL_CHANNELS):
+                        table += '\nServer-wide:\n'
                 else:
                     if not channel:
                         channel = self.bot.get_channel(c)
@@ -201,7 +208,8 @@ class ReCensor:
         for c in self.regexen[server.id]:
             if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
                 if c == ALL_CHANNELS:
-                    table += '\nServer-wide:\n'
+                    if self._re_present(ALL_CHANNELS):
+                        table += '\nServer-wide:\n'
                 else:
                     if not channel:
                         channel = self.bot.get_channel(c)
