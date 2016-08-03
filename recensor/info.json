@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "RECensor",
+    "SHORT" : "Uses regular expressions to filter messages to delete, whether matching or non-matching.",
+    "DESCRIPTION" : "Uses regular expressions to filter messages to delete, whether matching or non-matching."
+}
