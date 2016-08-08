@@ -48,9 +48,18 @@ class ReCensor:
                 return False
             else:
                 return False
+
         elif type(obj) is discord.Channel:
             server = obj.server
             channel = obj
+            if channel.id in self.regexen[server.id]:
+                return bool(self.regexen[server.id][channel.id])
+            else:
+                return False
+
+        elif type(obj) is str:  # won't work with ALL_CHANNELS
+            channel = self.bot.get_channel(obj)
+            server = channel.server
             if channel.id in self.regexen[server.id]:
                 return bool(self.regexen[server.id][channel.id])
             else:
@@ -82,7 +91,8 @@ class ReCensor:
 
     @recensor.command(pass_context=True, name='list')
     async def _list(self, ctx, channel: discord.Channel=None):
-        """Lists regexes used to filter messages"""
+        """Lists regexes used to filter messages.
+        Channel listing includes global patterns."""
         server = ctx.message.server
         self.regexen = dataIO.load_json(JSON_PATH)
         if not self._re_present(server):
@@ -90,15 +100,17 @@ class ReCensor:
             return
         table = ' | '.join(['mode', 'pattern']) + '\n'  # header
         for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
-                if c == ALL_CHANNELS:
-                    if self._re_present(ALL_CHANNELS):
-                        table += '\nServer-wide:\n'
+            if c == ALL_CHANNELS and self._re_present(server):
+                    table += '\nServer-wide:\n'
+            elif (channel and channel.id == c) or not channel:
+                if channel:
+                    ch_obj = channel
                 else:
-                    if not channel:
-                        channel = self.bot.get_channel(c)
-                    if self._re_present(channel):
-                        table += '\n#' + channel.name + '\n'
+                    ch_obj = self.bot.get_channel(c)
+                if ch_obj is None:
+                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
+                if self._re_present(ch_obj):
+                    table += '\n#' + ch_obj.name + '\n'
 
             for regex, mode in self.regexen[server.id][c].items():
                 table += ' | '.join([mode, regex]) + '\n'
@@ -168,15 +180,18 @@ class ReCensor:
         i = 1
         table = ' | '.join(['#'.ljust(4), 'mode', 'pattern']) + '\n'  # header
         for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
-                if c == ALL_CHANNELS:
-                    if self._re_present(ALL_CHANNELS):
-                        table += '\nServer-wide:\n'
+            if c == ALL_CHANNELS and self._re_present(server):
+                    table += '\nServer-wide:\n'
+            elif (channel and channel.id == c) or not channel:
+                if channel:
+                    ch_obj = channel
                 else:
-                    if not channel:
-                        channel = self.bot.get_channel(c)
-                    if self._re_present(channel):
-                        table += '\n#' + channel.name + '\n'
+                    ch_obj = self.bot.get_channel(c)
+                if ch_obj is None:
+                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
+                if self._re_present(ch_obj):
+                    table += '\n#' + ch_obj.name + '\n'
+
             for regex, oldmode in self.regexen[server.id][c].items():
                 table += ' | '.join([str(i).ljust(4), oldmode, regex]) + '\n'
                 re_list[str(i)] = (server.id, c, regex, oldmode)
@@ -206,15 +221,18 @@ class ReCensor:
         i = 1
         table = ' | '.join(['#'.ljust(4), 'mode', 'pattern']) + '\n'  # header
         for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS or (channel and channel.id == c) or not channel:
-                if c == ALL_CHANNELS:
-                    if self._re_present(ALL_CHANNELS):
-                        table += '\nServer-wide:\n'
+            if c == ALL_CHANNELS and self._re_present(server):
+                    table += '\nServer-wide:\n'
+            elif (channel and channel.id == c) or not channel:
+                if channel:
+                    ch_obj = channel
                 else:
-                    if not channel:
-                        channel = self.bot.get_channel(c)
-                    if self._re_present(channel):
-                        table += '\n#' + channel.name + '\n'
+                    ch_obj = self.bot.get_channel(c)
+                if ch_obj is None:
+                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
+                if self._re_present(ch_obj):
+                    table += '\n#' + ch_obj.name + '\n'
+
             for regex, mode in self.regexen[server.id][c].items():
                 table += ' | '.join([str(i).ljust(4), mode, regex]) + '\n'
                 re_list[str(i)] = (server.id, c, regex)
