@@ -6,9 +6,9 @@ If you have questions or would like some support for these cogs, please head ove
 If my cogs have made your life easier, consider donating through [paypal](https://paypal.me/calebrj) or [becoming a patron](https://www.patreon.com/calebj).
 
 ## Description of cogs
-* bartender: Spend economy.py money on drinks for yourself or others
+* ~~bartender~~: Removed because changes were merged into [Mash's repo](https://github.com/Canule/Mash-Cogs/)
 * duel: Procedurally generated duel with a flexible lexicon system
 * mute: Adds a Mute role and removes it after a prescribed time
 * punish: Mute that sets itself up, persists bot restarts and un/rejoin
-* recensor: **WIP**: Create inclusive or exclusive regex-based filters per channel or server
-* watchdog: Interfaces with systemd watchdog to restart bot when it goes offline
+* recensor: Create inclusive or exclusive regex-based filters per channel or server
+* watchdog: Interfaces with systemd watchdog to restart bot if it goes offline
