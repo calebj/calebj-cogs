@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Activity Logger",
+    "SHORT" : "Logger for server and direct messages, attachments, and server changes.",
+    "DESCRIPTION" : "Activitylog has the ability to log the following:\nDirect and server messages, with attachments, delete and edit\nMember changes: nickname, username, roles, join/leave, ban, kick\nServer changes: name, region, owner, icon\nChannel changes: create, delete, name, position, topic\nRole changes: create, delete, permissions, name, color, hoist, mentionable, position"
+}
