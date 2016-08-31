@@ -13,14 +13,14 @@ UserInputError = commands.UserInputError
 
 log = logging.getLogger('red.punish')
 
-TIMESPEC_TRANSLATE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
+UNIT_TABLE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
 DEFAULT_TIMEOUT = '30m'
 PURGE_MESSAGES = 1  # for cpunish
 
 
 def _parse_time(time):
-    if any(u in time for u in TIMESPEC_TRANSLATE.keys()):
-        delim = '([0-9.]*[{}])'.format(''.join(TIMESPEC_TRANSLATE.keys()))
+    if any(u in time for u in UNIT_TABLE.keys()):
+        delim = '([0-9.]*[{}])'.format(''.join(UNIT_TABLE.keys()))
         time = re.split(delim, time)
         time = sum([_timespec_sec(t) for t in time if t != ''])
     return int(time)
@@ -28,10 +28,38 @@ def _parse_time(time):
 
 def _timespec_sec(t):
     timespec = t[-1]
-    if timespec.lower() not in TIMESPEC_TRANSLATE:
+    if timespec.lower() not in UNIT_TABLE:
         raise UserInputError('Unknown time unit "%c"' % timespec)
     timeint = float(t[:-1])
-    return timeint * TIMESPEC_TRANSLATE[timespec]
+    return timeint * UNIT_TABLE[timespec]
+
+
+def _generate_timespec(sec):
+    timespec = []
+
+    def sort_key(kv):
+        k, v = kv
+        return v
+    for unit, secs in sorted(UNIT_TABLE.items(), key=sort_key, reverse=True):
+        q = sec // secs
+        if q:
+            timespec.append('%02.d%c' % (q, unit))
+        sec = sec % secs
+    return ''.join(timespec)
+
+
+def just(v, w, j='l'):
+    v = str(v)
+    if j is 'l':
+        return v.ljust(w)
+    elif j is 'c':
+        return v.center(w)
+    elif j is 'r':
+        return v.rjust(w)
+    elif j is 'n':
+        return v
+    else:
+        raise ValueError
 
 
 class Punish:
@@ -78,10 +106,11 @@ class Punish:
         if server.id not in self.json:
             self.json[server.id] = {}
 
-        self.json[server.id][user.id] = {'until': timestamp}
-        self.json[server.id][user.id]['by'] = ctx.message.author.id
-        if reason:
-            self.json[server.id][user.id]['reason'] = reason
+        self.json[server.id][user.id] = {
+            'until': timestamp,
+            'by': ctx.message.author.id,
+            'reason': reason
+        }
 
         await self.bot.add_roles(user, role)
         dataIO.save_json(self.location, self.json)
@@ -93,11 +122,11 @@ class Punish:
             return m == ctx.message or m.author == user
 
         try:
-            await self.bot.purge_from(ctx.message.channel, limit=PURGE_MESSAGES+1, check=is_user)
+            await self.bot.purge_from(ctx.message.channel, limit=PURGE_MESSAGES + 1, check=is_user)
             await self.bot.delete_message(ctx.message)
         except discord.errors.Forbidden:
             await self.bot.send_message(ctx.message.channel, "Punishment set, but I need"
-                "permissions to manage messages to clean up.")
+                                        "permissions to manage messages to clean up.")
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
@@ -131,10 +160,11 @@ class Punish:
         if server.id not in self.json:
             self.json[server.id] = {}
 
-        self.json[server.id][user.id] = {'until': timestamp}
-        self.json[server.id][user.id]['by'] = ctx.message.author.id
-        if reason:
-            self.json[server.id][user.id]['reason'] = reason
+        self.json[server.id][user.id] = {
+            'until': timestamp,
+            'by': ctx.message.author.id,
+            'reason': reason
+        }
 
         await self.bot.add_roles(user, role)
         dataIO.save_json(self.location, self.json)
@@ -142,6 +172,49 @@ class Punish:
         # schedule callback for role removal
         self.schedule_unpunish(duration, user, reason)
 
+        await self.bot.say(msg)
+
+    @commands.command(pass_context=True, no_pm=True, name='lspunish')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def list_punished(self, ctx):
+        server = ctx.message.server
+        server_id = server.id
+        if not (server_id in self.json and self.json[server_id]):
+            await self.bot.say("No users are currently punished.")
+            return
+
+        table = []
+        for member_id, data in self.json[server_id].items():
+            member = discord.utils.get(server.members, id=member_id)
+            if member:
+                member_name = str(member)
+                if member.nick:
+                    member_name += ' (%s)' % member.nick
+            else:
+                member_name = '(member not present, id #%d)'
+            table.append((data['until'], member_name))
+        table = sorted(table, key=lambda tup: tup[0])
+
+        fields = ['remaining', 'username (nick)']
+        hjust = ['c', 'c']
+        tjust = ['r', 'l']
+        now = time.time()
+        maxlens = [len(f) for f in fields]
+
+        for i, rn in enumerate(table):
+            remaining, name = rn
+            tsn = (_generate_timespec(remaining - now), name)
+            table[i] = tsn
+            for j, m in enumerate(maxlens):
+                l = len(tsn[j])
+                if l > m:
+                    maxlens[j] = l
+
+        output = ' | '.join(just(f, maxlens[i], hjust[i]) for i, f in enumerate(fields)) + '\n'
+        output += '+'.join('-' * (i + 1) for i in maxlens) + '\n'
+        output += '\n'.join(' | '.join(just(f, maxlens[i], tjust[i]) for i, f in enumerate(t)) for t in table)
+
+        msg = '```\n%s\n```' % output
         await self.bot.say(msg)
 
     async def setup_role(self, server, quiet=False):
@@ -174,9 +247,12 @@ class Punish:
         sid = user.server.id
         if role and role in user.roles:
             reason = 'Punishment manually ended early by %s. ' % ctx.message.author
-            if 'reason' in self.json[sid][user.id]:
+            if self.json[sid][user.id]['reason']:
                 reason += self.json[sid][user.id]['reason']
             await self._unpunish(user, reason)
+            await self.bot.say('Done.')
+        else:
+            await self.bot.say("That user wasn't punished.")
 
     async def on_load(self):
         """Called when bot is ready and each time cog is (re)loaded"""
@@ -190,7 +266,7 @@ class Punish:
                 if duration < 0:
                     if member:
                         reason = 'Punishment removal overdue, maybe bot was offline. '
-                        if 'reason' in self.json[server.id][member_id]:
+                        if self.json[server.id][member_id]['reason']:
                             reason += self.json[server.id][member_id]['reason']
                         self._unpunish(member, reason)
                     else:  # member disappeared
@@ -266,13 +342,13 @@ class Punish:
             return
         if role and role in before.roles and role not in after.roles:
             msg = 'Your punishiment in %s was ended early by a moderator/admin.' % before.server.name
-            if 'reason' in self.json[sid][before.id]:
+            if self.json[sid][before.id]['reason']:
                 msg += '\nReason was: ' + self.json[sid][before.id]['reason']
             await self.bot.send_message(after, msg)
             self._unpunish_data(after)
 
     async def on_member_join(self, member):
-        """Restore punishment if user leaves/rejoins"""
+        """Restore punishment if punished user leaves/rejoins"""
         sid = member.server.id
         role = discord.utils.get(member.server.roles, name=self.role_name)
         if role:
@@ -283,7 +359,7 @@ class Punish:
             if duration > 0:
                 await self.bot.add_roles(member, role)
                 reason = 'punishment re-added on rejoin. '
-                if 'reason' in self.json[sid][member.id]:
+                if self.json[sid][member.id]['reason']:
                     reason += self.json[sid][member.id]['reason']
                 if member.id not in self.handles[sid]:
                     self.schedule_unpunish(duration, member, reason)
