@@ -184,17 +184,21 @@ class Punish:
         for server, members in self.json.items():
             server = discord.utils.get(self.bot.servers, id=server)
             role = discord.utils.get(server.roles, name=self.role_name)
-            for member, data in members.items():
+            for member_id, data in members.items():
                 duration = data['until'] - time.time()
-                member = discord.utils.get(server.members, id=member)
+                member = discord.utils.get(server.members, id=member_id)
                 if duration < 0:
-                    reason = 'Punishment removal overdue, maybe bot was offline. '
-                    if 'reason' in self.json[server.id][member.id]:
-                        reason += self.json[server.id][member.id]['reason']
-                    self._unpunish(member, reason)
-                else:
+                    if member:
+                        reason = 'Punishment removal overdue, maybe bot was offline. '
+                        if 'reason' in self.json[server.id][member_id]:
+                            reason += self.json[server.id][member_id]['reason']
+                        self._unpunish(member, reason)
+                    else:  # member disappeared
+                        del(self.json[member.server.id][member.id])
+                elif member:
                     await self.bot.add_roles(member, role)
                     self.schedule_unpunish(duration, member)
+        dataIO.save_json(self.location, self.json)
 
     # Functions related to unpunishing
 
