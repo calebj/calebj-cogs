@@ -6,10 +6,12 @@ If you have questions or would like some support for these cogs, please head ove
 If my cogs have made your life easier, consider donating through [paypal](https://paypal.me/calebrj) or [becoming a patron](https://www.patreon.com/calebj).
 
 ## Description of cogs
-* ~~bartender~~: Removed because changes were merged into [Mash's repo](https://github.com/Canule/Mash-Cogs/)
-* duel: Procedurally generated duel with a flexible lexicon system
-* mute: Adds a Mute role and removes it after a prescribed time
-* punish: Mute that sets itself up, persists bot restarts and un/rejoin
-* recensor: Create inclusive or exclusive regex-based filters per channel or server
-* watchdog: Interfaces with systemd watchdog to restart bot if it goes offline
+* activitylog: Log channel and DM messages, server changes, and even attachments.
+* ~~bartender~~: Removed because changes were merged into [Mash's repo](https://github.com/Canule/Mash-Cogs/).
+* duel: Procedurally generated duel with a flexible lexicon system.
+* galias: Bot-wide command aliases. Only owner can add/remove them.
+* mute: Adds a Mute role and removes it after a prescribed time.
+* punish: Zero-configuration timed mute with evasion protection.
+* recensor: Create inclusive or exclusive regex filters per channel or server.
+* watchdog: Interfaces with systemd watchdog to restart bot if it goes offline.
 * zalgo: HE COMES.
