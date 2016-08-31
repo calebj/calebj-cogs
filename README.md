@@ -12,3 +12,4 @@ If my cogs have made your life easier, consider donating through [paypal](https:
 * punish: Mute that sets itself up, persists bot restarts and un/rejoin
 * recensor: Create inclusive or exclusive regex-based filters per channel or server
 * watchdog: Interfaces with systemd watchdog to restart bot if it goes offline
+* zalgo: HE COMES.
