@@ -1,6 +1,8 @@
 from discord.ext import commands
-
 from random import randint, choice, sample
+
+ZALGO_DEFAULT_AMT = 3
+ZALGO_MAX_AMT = 7
 
 ZALGO_PARAMS = {
     'above': (5, 10),
@@ -19,16 +21,17 @@ class Zalgo:
         self.bot = bot
 
     @commands.command()
-    async def zalgo(self, text: str):
+    async def zalgo(self, *, text: str):
         fw = text.split()[0]
         try:
-            amount = int(fw)
+            amount = min(int(fw), ZALGO_MAX_AMT)
             text = text[len(fw):].strip()
         except ValueError:
-            amount = 5
-        await self.bot.say(zalgoify(text, amount))
+            amount = ZALGO_DEFAULT_AMT
+        text = self.zalgoify(text.upper(), amount)
+        await self.bot.say(text)
 
-    def zalgoify(text, amount=5):
+    def zalgoify(self, text, amount=3):
         zalgo_text = ''
         for c in text:
             zalgo_text += c
