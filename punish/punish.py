@@ -9,11 +9,21 @@ import os
 import time
 import re
 
+try:
+    from tabulate import tabulate
+except Exception as e:
+    raise RuntimeError("You must run `pip3 install tabulate`.") from e
+
 UserInputError = commands.UserInputError
 
 log = logging.getLogger('red.punish')
 
 UNIT_TABLE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
+UNIT_SUF_TABLE = {'sec': (1, ''),
+                  'min': (60, ''),
+                  'hr': (60 * 60, 's'),
+                  'day': (60 * 60 * 24, 's')
+                  }
 DEFAULT_TIMEOUT = '30m'
 PURGE_MESSAGES = 1  # for cpunish
 
@@ -37,15 +47,18 @@ def _timespec_sec(t):
 def _generate_timespec(sec):
     timespec = []
 
-    def sort_key(kv):
-        k, v = kv
-        return v
-    for unit, secs in sorted(UNIT_TABLE.items(), key=sort_key, reverse=True):
+    def sort_key(kt):
+        k, t = kt
+        return t[0]
+    for unit, kt in sorted(UNIT_SUF_TABLE.items(), key=sort_key, reverse=True):
+        secs, suf = kt
         q = sec // secs
         if q:
-            timespec.append('%02.d%c' % (q, unit))
+            if q <= 1:
+                suf = ''
+            timespec.append('%02.d%s%s' % (q, unit, suf))
         sec = sec % secs
-    return ''.join(timespec)
+    return ', '.join(timespec)
 
 
 def just(v, w, j='l'):
@@ -183,38 +196,28 @@ class Punish:
             await self.bot.say("No users are currently punished.")
             return
 
-        table = []
-        for member_id, data in self.json[server_id].items():
-            member = discord.utils.get(server.members, id=member_id)
+        def getmname(mid):
+            member = discord.utils.get(server.members, id=mid)
             if member:
-                member_name = str(member)
                 if member.nick:
-                    member_name += ' (%s)' % member.nick
+                    return '%s (%s)' % (member.nick, member)
+                else:
+                    return str(member)
             else:
-                member_name = '(member not present, id #%d)'
-            table.append((data['until'], member_name))
-        table = sorted(table, key=lambda tup: tup[0])
+                return '(member not present, id #%d)'
 
-        fields = ['remaining', 'username (nick)']
-        hjust = ['c', 'c']
-        tjust = ['r', 'l']
+        headers = ['Member', 'Remaining', 'Punished by']
+        table = []
         now = time.time()
-        maxlens = [len(f) for f in fields]
+        for member_id, data in self.json[server_id].items():
+            member_name = getmname(member_id)
+            punisher_name = getmname(data['by'])
+            table.append((member_name, data['until'], punisher_name))
 
-        for i, rn in enumerate(table):
-            remaining, name = rn
-            tsn = (_generate_timespec(remaining - now), name)
-            table[i] = tsn
-            for j, m in enumerate(maxlens):
-                l = len(tsn[j])
-                if l > m:
-                    maxlens[j] = l
+        table = sorted(table, key=lambda tup: tup[1])
+        table = [(n, _generate_timespec(r - now), b) for n, r, b in table]
 
-        output = ' | '.join(just(f, maxlens[i], hjust[i]) for i, f in enumerate(fields)) + '\n'
-        output += '+'.join('-' * (i + 1) for i in maxlens) + '\n'
-        output += '\n'.join(' | '.join(just(f, maxlens[i], tjust[i]) for i, f in enumerate(t)) for t in table)
-
-        msg = '```\n%s\n```' % output
+        msg = '```\n%s\n```' % tabulate(table, headers)
         await self.bot.say(msg)
 
     async def setup_role(self, server, quiet=False):
