@@ -82,7 +82,8 @@ class ActivityLogger(object):
 
     @logset.command(name='default')
     async def set_default(self, on_off: bool = None):
-        """Sets whether logging is on or off where unset"""
+        """Sets whether logging is on or off where unset.
+        Server overrides, global override, and attachments don't use this."""
         if on_off is not None:
             self.settings['default'] = on_off
         if self.settings['default']:
@@ -203,12 +204,11 @@ class ActivityLogger(object):
         if type(location) is discord.Server:
             if location.id in self.settings:
                 loc = self.settings[location.id]
-                return loc.get('all', default) or loc.get('events', default)
+                return loc.get('all', False) or loc.get('events', default)
         elif type(location) is discord.Channel:
-            serverid = location.server.id
-            if serverid in self.settings:
-                loc = self.settings[location.id]
-                return loc.get('all', default) or loc.get(location.id, default)
+            if location.server.id in self.settings:
+                loc = self.settings[location.server.id]
+                return loc.get('all', False) or loc.get(location.id, default)
         elif type(location) is discord.PrivateChannel:
             return self.settings.get('direct', default)
         else:
@@ -415,9 +415,8 @@ def check_files():
     if not dataIO.is_valid_json(JSON):
         defaults = {
             'everything': False,
-            'direct': False,
-            'default': False,
             'attachments': False
+            'default': False,
             }
         dataIO.save_json(JSON, defaults)
 

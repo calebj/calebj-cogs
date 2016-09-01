@@ -33,6 +33,7 @@ If you have questions or would like some support for these cogs, please head ove
 * Message attachments: `logset attachments {on|off}`
 * Default setting: `logset default {on|off}`
   * If you haven't set an option on or off, this default is used.
+  * Server override, global override, and attachments don't use this.
 * Global override: `logset everything {on|off}`
   * If this is `on`, the bot will log everything, period.
 
