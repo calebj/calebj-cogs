@@ -415,8 +415,8 @@ def check_files():
     if not dataIO.is_valid_json(JSON):
         defaults = {
             'everything': False,
-            'attachments': False
-            'default': False,
+            'attachments': False,
+            'default': False
             }
         dataIO.save_json(JSON, defaults)
 
