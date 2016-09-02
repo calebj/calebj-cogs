@@ -6,7 +6,8 @@ from __main__ import user_allowed, send_cmd_help
 import os
 from copy import deepcopy
 
-PATH = 'data/alias/'
+OLD_JSON = 'data/alias/aliases.json'
+PATH = 'data/galias/'
 JSON = PATH + 'aliases.json'
 
 
@@ -137,6 +138,21 @@ class GlobalAlias:
         return None
 
 
+def convert_old_data():
+    """Moves recognizable global aliases from regular alias/ to galias/"""
+    new_mod = {}
+    if os.path.exists(OLD_JSON):
+        old_data = dataIO.load_json(OLD_JSON)
+        old_mod = old_data.copy()
+        for key, d in old_data.items():
+            if type(d) is str:
+                new_mod[key] = old_mod.pop(key)
+        if old_data != old_mod:
+            dataIO.save_json(OLD_JSON, old_mod)
+        if new_mod:
+            dataIO.save_json(JSON, new_mod)
+
+
 def check_folder():
     if not os.path.exists(PATH):
         print("Creating data/galias folder...")
@@ -152,6 +168,7 @@ def check_file():
 def setup(bot):
     check_folder()
     check_file()
+    convert_old_data()
     n = GlobalAlias(bot)
     bot.add_listener(n.check_aliases, "on_message")
     bot.add_cog(n)
