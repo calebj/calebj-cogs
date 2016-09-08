@@ -113,8 +113,13 @@ class Punish:
 
         if not duration:
             duration = DEFAULT_TIMEOUT
-        duration = _parse_time(duration)
-        timestamp = time.time() + duration
+            timestamp = time.time() + duration
+        elif duration.lower() in ['forever', 'inf', 'infinite']:
+            duration = None
+            timestamp = None
+        else:
+            duration = _parse_time(duration)
+            timestamp = time.time() + duration
 
         if server.id not in self.json:
             self.json[server.id] = {}
@@ -129,7 +134,8 @@ class Punish:
         dataIO.save_json(self.location, self.json)
 
         # schedule callback for role removal
-        self.schedule_unpunish(duration, user, reason)
+        if duration:
+            self.schedule_unpunish(duration, user, reason)
 
         def is_user(m):
             return m == ctx.message or m.author == user
@@ -167,8 +173,13 @@ class Punish:
         if not duration:
             duration = DEFAULT_TIMEOUT
             msg += ' Using default duration of ' + duration
-        duration = _parse_time(duration)
-        timestamp = time.time() + duration
+            timestamp = time.time() + duration
+        elif duration.lower() in ['forever', 'inf', 'infinite']:
+            duration = None
+            timestamp = None
+        else:
+            duration = _parse_time(duration)
+            timestamp = time.time() + duration
 
         if server.id not in self.json:
             self.json[server.id] = {}
@@ -183,7 +194,8 @@ class Punish:
         dataIO.save_json(self.location, self.json)
 
         # schedule callback for role removal
-        self.schedule_unpunish(duration, user, reason)
+        if duration:
+            self.schedule_unpunish(duration, user, reason)
 
         await self.bot.say(msg)
 
@@ -219,6 +231,18 @@ class Punish:
 
         msg = '```\n%s\n```' % tabulate(table, headers)
         await self.bot.say(msg)
+
+    @commands.command(pass_context=True, no_pm=True)
+    @checks.mod_or_permissions(manage_messages=True)
+    async def warn(self, ctx, user: discord.Member, *, reason: str=None):
+        """Warns a user with boilerplate about the rules."""
+        msg = ['Hey %s, ' % user.mention]
+        msg.append("you're doing something that might get you muted if you keep "
+                   "doing it.")
+        if reason:
+            msg.append(" Specifically, %s." % reason)
+        msg.append("Be sure to review the server rules.")
+        await self.bot.say(' '.join(msg))
 
     async def setup_role(self, server, quiet=False):
         role = discord.utils.get(server.roles, name=self.role_name)
@@ -264,9 +288,11 @@ class Punish:
             server = discord.utils.get(self.bot.servers, id=server)
             role = discord.utils.get(server.roles, name=self.role_name)
             for member_id, data in members.items():
-                duration = data['until'] - time.time()
+                until = data['until']
+                if until:
+                    duration = until - time.time()
                 member = discord.utils.get(server.members, id=member_id)
-                if duration < 0:
+                if until and duration < 0:
                     if member:
                         reason = 'Punishment removal overdue, maybe bot was offline. '
                         if self.json[server.id][member_id]['reason']:
@@ -276,7 +302,8 @@ class Punish:
                         del(self.json[member.server.id][member.id])
                 elif member:
                     await self.bot.add_roles(member, role)
-                    self.schedule_unpunish(duration, member)
+                    if until:
+                        self.schedule_unpunish(duration, member)
         dataIO.save_json(self.location, self.json)
 
     # Functions related to unpunishing
