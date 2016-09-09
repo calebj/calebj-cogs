@@ -171,8 +171,8 @@ class Punish:
             msg = 'Done.'
 
         if not duration:
+            msg += ' Using default duration of ' + DEFAULT_TIMEOUT
             duration = _parse_time(DEFAULT_TIMEOUT)
-            msg += ' Using default duration of ' + duration
             timestamp = time.time() + duration
         elif duration.lower() in ['forever', 'inf', 'infinite']:
             duration = None
