@@ -112,7 +112,7 @@ class Punish:
             self.json[server.id] = {}
 
         if not duration:
-            duration = DEFAULT_TIMEOUT
+            duration = _parse_time(DEFAULT_TIMEOUT)
             timestamp = time.time() + duration
         elif duration.lower() in ['forever', 'inf', 'infinite']:
             duration = None
@@ -171,7 +171,7 @@ class Punish:
             msg = 'Done.'
 
         if not duration:
-            duration = DEFAULT_TIMEOUT
+            duration = _parse_time(DEFAULT_TIMEOUT)
             msg += ' Using default duration of ' + duration
             timestamp = time.time() + duration
         elif duration.lower() in ['forever', 'inf', 'infinite']:
