@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Server Quotes",
+    "SHORT" : "Keep track of memorable quotes by server members or others.",
+    "DESCRIPTION" : "Keep track of memorable quotes by server members or others. Only moderators and up may add quotes, but all members may access them.\nQuotes may be randomly selected, randomly selected by user, or accessed by number.\nUse lsquotes to show a table, and rmquote to delete a quote by its number."
+}
