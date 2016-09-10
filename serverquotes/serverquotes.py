@@ -137,7 +137,7 @@ class ServerQuotes:
                           self._get_name_by_id(ctx, q['added_by']),
                           text))
         tabulated = tabulate(table, header)
-        for page in pagify(tabulated):
+        for page in pagify(tabulated, ['\n']):
             await self.bot.say('```\n%s\n```' % page)
 
     @commands.command(pass_context=True, no_pm=True)
