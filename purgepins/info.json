@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "CalebJ",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "PurgePins",
+    "SHORT" : "Delete pin notification messages after a per-channel interval.",
+    "DESCRIPTION" : "If enabled, PurgePins will watch for pin notifications and delete them after a certain interval, or immediately (interval 0). Accepted time units are s(econds), m(inutes), and h(ours). To disable, use '!purgepins off'"
+}

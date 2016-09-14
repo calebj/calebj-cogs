@@ -13,6 +13,7 @@ If you have questions or would like some support for these cogs, please head ove
 * galias: Bot-wide command aliases. Only owner can add/remove them.
 * mute: Adds a Mute role and removes it after a prescribed time.
 * punish: Zero-configuration timed mute with evasion protection.
+* purgepins: Delete pin notification messages after a per-channel interval. 
 * recensor: Create inclusive or exclusive regex filters per channel or server.
 * serverquotes: Store and recall memorable quotes for your server.
 * watchdog: Interfaces with systemd watchdog to restart bot if it goes offline.
