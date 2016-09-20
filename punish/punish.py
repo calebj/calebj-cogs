@@ -39,7 +39,7 @@ def _parse_time(time):
 def _timespec_sec(t):
     timespec = t[-1]
     if timespec.lower() not in UNIT_TABLE:
-        raise UserInputError('Unknown time unit "%c"' % timespec)
+        raise ValueError('Unknown time unit "%c"' % timespec)
     timeint = float(t[:-1])
     return timeint * UNIT_TABLE[timespec]
 
@@ -202,6 +202,10 @@ class Punish:
     @commands.command(pass_context=True, no_pm=True, name='lspunish')
     @checks.mod_or_permissions(manage_messages=True)
     async def list_punished(self, ctx):
+        """Shows a table of punished users with time, mod and reason.
+
+        Displays punished users, time remaining, responsible moderator and
+        the reason for punishment, if any."""
         server = ctx.message.server
         server_id = server.id
         if not (server_id in self.json and self.json[server_id]):
@@ -218,18 +222,25 @@ class Punish:
             else:
                 return '(member not present, id #%d)'
 
-        headers = ['Member', 'Remaining', 'Punished by']
+        headers = ['Member', 'Remaining', 'Punished by', 'Reason']
         table = []
+        disp_table = []
         now = time.time()
         for member_id, data in self.json[server_id].items():
             member_name = getmname(member_id)
             punisher_name = getmname(data['by'])
-            table.append((member_name, data['until'], punisher_name))
+            reason = data['reason']
+            t = data['until']
+            sort = t if t else float("inf")
+            table.append((sort, member_name, t, punisher_name, reason))
 
-        table = sorted(table, key=lambda tup: tup[1])
-        table = [(n, _generate_timespec(r - now), b) for n, r, b in table]
+        for _, name, rem, mod, reason in sorted(table, key=lambda x: x[0]):
+            remaining = _generate_timespec(rem - now) if rem else 'forever'
+            if not reason:
+                reason = 'n/a'
+            disp_table.append((name, remaining, mod, reason))
 
-        msg = '```\n%s\n```' % tabulate(table, headers)
+        msg = '```\n%s\n```' % tabulate(disp_table, headers)
         await self.bot.say(msg)
 
     @commands.command(pass_context=True, no_pm=True)
