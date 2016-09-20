@@ -61,20 +61,6 @@ def _generate_timespec(sec):
     return ', '.join(timespec)
 
 
-def just(v, w, j='l'):
-    v = str(v)
-    if j is 'l':
-        return v.ljust(w)
-    elif j is 'c':
-        return v.center(w)
-    elif j is 'r':
-        return v.rjust(w)
-    elif j is 'n':
-        return v
-    else:
-        raise ValueError
-
-
 class Punish:
     """Adds the ability to punish users."""
 
@@ -93,7 +79,7 @@ class Punish:
     def __init__(self, bot):
         self.bot = bot
         self.location = 'data/punish/settings.json'
-        self.json = dataIO.load_json(self.location)
+        self.json = compat_load(self.location)
         self.handles = {}
         self.role_name = 'Punished'
         bot.loop.create_task(self.on_load())
@@ -295,8 +281,12 @@ class Punish:
     async def on_load(self):
         """Called when bot is ready and each time cog is (re)loaded"""
         await self.bot.wait_until_ready()
-        for server, members in self.json.items():
-            server = discord.utils.get(self.bot.servers, id=server)
+        # copy so we can delete stuff from the original
+        for serverid, members in self.json.copy().items():
+            server = discord.utils.get(self.bot.servers, id=serverid)
+            if not server:
+                del(self.json[serverid])
+                continue
             role = discord.utils.get(server.roles, name=self.role_name)
             for member_id, data in members.items():
                 until = data['until']
@@ -310,7 +300,7 @@ class Punish:
                             reason += self.json[server.id][member_id]['reason']
                         self._unpunish(member, reason)
                     else:  # member disappeared
-                        del(self.json[member.server.id][member.id])
+                        del(self.json[server.id][member.id])
                 elif member:
                     await self.bot.add_roles(member, role)
                     if until:
@@ -404,6 +394,18 @@ class Punish:
                     reason += self.json[sid][member.id]['reason']
                 if member.id not in self.handles[sid]:
                     self.schedule_unpunish(duration, member, reason)
+
+
+def compat_load(path):
+    data = dataIO.load_json(path)
+    for server, punishments in data.items():
+        for user, pdata in punishments.items():
+            by = pdata.pop('givenby', None)  # able to read Kownlin json
+            by = by if by else pdata.pop('by', None)
+            pdata['by'] = by
+            pdata['until'] = pdata.pop('until', None)
+            pdata['reason'] = pdata.pop('reason', None)
+    return data
 
 
 def check_folder():
