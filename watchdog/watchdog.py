@@ -37,6 +37,9 @@ class Watchdog:
         self.sdnotify.notify(b'WATCHDOG=1')
         self.logger.debug('Got HEARTBEAT_ACK; petting watchdog.')
 
+    async def on_ready(self):
+        self.pet_watchdog()
+
     async def on_socket_raw_receive(self, data):
             # no binary frames
             if isinstance(data, bytes):
