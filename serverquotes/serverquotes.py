@@ -86,6 +86,8 @@ class ServerQuotes:
 
     def _get_quote(self, ctx, author_or_num=None):
         sid = ctx.message.server.id
+        if type(author_or_num) is discord.Member:
+            return self._get_random_author_quote(ctx, author_or_num)
         if author_or_num:
             try:
                 quote_id = int(author_or_num)
@@ -174,7 +176,13 @@ class ServerQuotes:
             await self.bot.say("There are no quotes in this server!")
             return
 
-        quote = self._get_quote(ctx, author_or_num)
+        try:
+            quote = self._get_quote(ctx, author_or_num)
+        except commands.BadArgument:
+            if author_or_num.lower().strip() in ['me', 'myself', 'self']:
+                quote = self._get_quote(ctx, ctx.message.author)
+            else:
+                raise
         await self.bot.say(self._format_quote(ctx, quote))
 
 
