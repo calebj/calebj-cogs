@@ -269,7 +269,7 @@ class Duel:
         duelists = self.duelists.get(server.id, {})
         member_list = duelists.get("protected", [])
         member_list = map(server.get_member, member_list)
-        name_list = map(lambda m: m.display_name, member_list)
+        name_list = list(map(lambda m: m.display_name, member_list))
         if name_list:
             name_list = ["**Protected users:**"] + sorted(name_list)
             delim = '\n'
