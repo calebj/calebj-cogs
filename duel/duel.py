@@ -268,9 +268,9 @@ class Duel:
         server = ctx.message.server
         duelists = self.duelists.get(server.id, {})
         member_list = duelists.get("protected", [])
-        member_list = map(server.get_member, member_list)
-        name_list = list(map(lambda m: m.display_name, member_list))
-        if name_list:
+        if member_list:
+            member_list = map(server.get_member, member_list)
+            name_list = map(lambda m: m.display_name, member_list)
             name_list = ["**Protected users:**"] + sorted(name_list)
             delim = '\n'
             for page in pagify(delim.join(name_list), delims=[delim]):
@@ -345,6 +345,7 @@ class Duel:
             msg = "%s challenges %s to a duel!" % (p1, p2)
             msg += "\nBy a coin toss, %s will go first." % order[0][0]
             await self.bot.say(msg)
+            duelists = self.duelists.get(server.id, {})
             for i in range(MAX_ROUNDS):
                 if p1.hp <= 0 or p2.hp <= 0:
                     break
@@ -353,7 +354,7 @@ class Duel:
                         break
                     if attacker.member == ctx.message.server.me:
                         msg = self.generate_action(attacker, defender, 'BOT')
-                    elif defender.member.id in self.duelists[server.id]["protected"]:
+                    elif defender.member.id in duelists.get('protected', []):
                         msg = self.generate_action(attacker, defender, 'BOT_PROTECT')
                     else:
                         msg = self.generate_action(attacker, defender)
