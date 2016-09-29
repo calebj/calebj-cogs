@@ -298,7 +298,7 @@ class Punish:
                         reason = 'Punishment removal overdue, maybe bot was offline. '
                         if self.json[server.id][member_id]['reason']:
                             reason += self.json[server.id][member_id]['reason']
-                        self._unpunish(member, reason)
+                        await self._unpunish(member, reason)
                     else:  # member disappeared
                         del(self.json[server.id][member.id])
                 elif member:
