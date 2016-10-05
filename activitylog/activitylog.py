@@ -74,7 +74,7 @@ class ActivityLogger(object):
         """Global override for all logging."""
         if on_off is not None:
             self.settings['everything'] = on_off
-        if self.settings['everything']:
+        if self.settings.get('everything', False):
             await self.bot.say("Global logging override is enabled.")
         else:
             await self.bot.say("Global logging override is disabled.")
@@ -86,7 +86,7 @@ class ActivityLogger(object):
         Server overrides, global override, and attachments don't use this."""
         if on_off is not None:
             self.settings['default'] = on_off
-        if self.settings['default']:
+        if self.settings.get('default', False):
             await self.bot.say("Logging is enabled by default.")
         else:
             await self.bot.say("Logging is disabled by default.")
@@ -97,7 +97,8 @@ class ActivityLogger(object):
         """Log direct messages?"""
         if on_off is not None:
             self.settings['direct'] = on_off
-        if self.settings['direct']:
+        default = self.settings.get('default', False)
+        if self.settings.get('direct', default):
             await self.bot.say("Logging of direct messages is enabled.")
         else:
             await self.bot.say("Logging of direct messages is disabled.")
@@ -108,7 +109,7 @@ class ActivityLogger(object):
         """Download message attachments?"""
         if on_off is not None:
             self.settings['attachments'] = on_off
-        if self.settings['attachments']:
+        if self.settings.get('attachments', False):
             await self.bot.say("Downloading of attachments is enabled.")
         else:
             await self.bot.say("Downloading of attachments is disabled.")
@@ -198,9 +199,9 @@ class ActivityLogger(object):
             return handle
 
     def should_log(self, location):
-        if self.settings['everything']:
+        if self.settings.get('everything', False):
             return True
-        default = self.settings['default']
+        default = self.settings.get('default', False)
         if type(location) is discord.Server:
             if location.id in self.settings:
                 loc = self.settings[location.id]
@@ -216,7 +217,8 @@ class ActivityLogger(object):
         return default
 
     def should_download(self, msg):
-        return self.should_log(msg.channel) and self.settings['attachments']
+        return self.should_log(msg.channel) and \
+            self.settings.get('attachments', False)
 
     def process_attachment(self, message):
         a = message.attachments[0]
