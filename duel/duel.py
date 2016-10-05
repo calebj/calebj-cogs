@@ -287,6 +287,7 @@ class Duel:
     async def _duels(self, ctx, top: int=10):
         """Shows the duel leaderboard, defaults to top 10"""
         server = ctx.message.server
+        server_members = [m.id for m in server.members]
         if top < 1:
             top = 10
         if server.id in self.duelists:
@@ -294,8 +295,17 @@ class Duel:
                 _, v = kv
                 return v['wins'] - v['losses']
 
-            duels_sorted = sorted(self.duelists[server.id].items(), key=sort_wins,
-                                  reverse=True)
+            def stat_filter(kv):
+                uid, stats = kv
+                if type(stats) is not dict:
+                    return False
+                if uid not in server_members:
+                    return False
+                return True
+
+            # filter out extra data, TODO: store protected list seperately
+            duel_stats = filter(stat_filter, self.duelists[server.id].items())
+            duels_sorted = sorted(duel_stats, key=sort_wins, reverse=True)
             if len(duels_sorted) < top:
                 top = len(duels_sorted)
             topten = duels_sorted[:top]
