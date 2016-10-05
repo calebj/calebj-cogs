@@ -222,7 +222,7 @@ class Duel:
         else:
             return self.duelists[serverid][userid]
 
-    @checks.mod_or_permissions(manage_roles=True)
+    @checks.mod_or_permissions(administrator=True)
     @commands.command(name="protect", pass_context=True)
     async def _protect(self, ctx, user: discord.Member=None):
         """Adds a member to the protected members list"""
@@ -244,7 +244,7 @@ class Duel:
                 await self.bot.say("%s has been successfully added to the "
                                    "protection list." % name)
 
-    @checks.mod_or_permissions(manage_roles=True)
+    @checks.mod_or_permissions(administrator=True)
     @commands.command(name="unprotect", pass_context=True)
     async def _unprotect(self, ctx, user: discord.Member=None):
         """Removes a member from the duel protection list"""
