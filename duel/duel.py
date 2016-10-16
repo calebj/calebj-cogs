@@ -129,8 +129,6 @@ FUMBLE = {"{a} closes in on {d}, but suddenly remembers a funny joke and laughs 
 
 BOT = {"{a} charges its laser aaaaaaaand... BZZZZZZT! {d} is now a smoking crater for daring to challenge the bot.": INITIAL_HP}
 
-BOT_PROTECT = {"{a} attacks {d}, but the bot intervenes!": INITIAL_HP}
-
 HITS = ['deals', 'hits for']
 RECOVERS = ['recovers', 'gains', 'heals']
 
@@ -141,8 +139,7 @@ MOVES = {'CRITICAL': (CRITICAL, TARGET_OTHER, -2),
          'ATTACK': (ATTACK, TARGET_OTHER, -1),
          'FUMBLE': (FUMBLE, TARGET_SELF, -1),
          'HEAL': (HEAL, TARGET_SELF, 1),
-         'BOT': (BOT, TARGET_OTHER, -64),
-         'BOT_PROTECT': (BOT_PROTECT, TARGET_SELF, -64)}
+         'BOT': (BOT, TARGET_OTHER, -64)}
 
 # Weights of distribution for biased selection of moves
 WEIGHTED_MOVES = {'CRITICAL': 0.05, 'ATTACK': 1, 'FUMBLE': 0.1, 'HEAL': 0.1}
@@ -347,10 +344,20 @@ class Duel:
         else:
             author = ctx.message.author
             server = ctx.message.server
+            duelists = self.duelists.get(server.id, {})
             p1 = Player(self, author)
             p2 = Player(self, user)
+
             if user == author:
                 await self.bot.reply("you can't duel yourself, silly!")
+                return
+            elif user.id in duelists.get('protected', []):
+                await self.bot.reply("%s is on the protected users list."
+                                     % user.display_name)
+                return
+            elif author.id in duelists.get('protected', []):
+                await self.bot.reply("you can't duel anyone while you're on "
+                                     " the protected users list.")
                 return
 
             order = [(p1, p2), (p2, p1)]
@@ -358,7 +365,6 @@ class Duel:
             msg = "%s challenges %s to a duel!" % (p1, p2)
             msg += "\nBy a coin toss, %s will go first." % order[0][0]
             await self.bot.say(msg)
-            duelists = self.duelists.get(server.id, {})
             for i in range(MAX_ROUNDS):
                 if p1.hp <= 0 or p2.hp <= 0:
                     break
@@ -367,8 +373,6 @@ class Duel:
                         break
                     if attacker.member == ctx.message.server.me:
                         msg = self.generate_action(attacker, defender, 'BOT')
-                    elif defender.member.id in duelists.get('protected', []):
-                        msg = self.generate_action(attacker, defender, 'BOT_PROTECT')
                     else:
                         msg = self.generate_action(attacker, defender)
                     await self.bot.say(msg)
