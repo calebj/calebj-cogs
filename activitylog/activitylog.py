@@ -182,7 +182,7 @@ class ActivityLogger(object):
             # Clean up excess handles before creating a new one
             if len(self.handles) >= 256:
                 oldest_path = sorted(self.handles.items(),
-                                     key=lambda x: x[1].time)[0]
+                                     key=lambda x: x[1].time)[0][0]
                 self.handles[oldest_path].close()
                 del self.handles[oldest_path]
 
