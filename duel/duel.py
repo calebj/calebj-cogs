@@ -488,14 +488,7 @@ def check_files():
 
 
 def setup(bot):
-    global logger
     check_folders()
     check_files()
     n = Duel(bot)
-    logger = logging.getLogger("red.duel")
-    if logger.level == 0:  # Prevents the logger from being loaded again in case of module reload
-        logger.setLevel(logging.INFO)
-        handler = logging.FileHandler(filename=LOG_PATH, encoding='utf-8', mode='a')
-        handler.setFormatter(logging.Formatter('%(asctime)s %(message)s', datefmt="[%d/%m/%Y %H:%M]"))
-        logger.addHandler(handler)
     bot.add_cog(n)
