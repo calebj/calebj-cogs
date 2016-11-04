@@ -97,7 +97,7 @@ class GlobalAlias:
         for alias in sorted(self.aliases):
             alias_list += alias + '\n'
 
-        pages = pagify(alias_list, ['\n'], True, shorten)
+        pages = pagify(alias_list, ['\n'], escape=True, shorten_by=shorten)
         for i, page in enumerate(pages):
             if i == 0:
                 page = header + '```\n%s\n```' % page
