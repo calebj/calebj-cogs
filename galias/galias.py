@@ -19,13 +19,13 @@ class GlobalAlias:
     def save(self):
         dataIO.save_json(JSON, self.aliases)
 
-    @commands.group(pass_context=True, no_pm=True)
+    @commands.group(pass_context=True)
     async def galias(self, ctx):
         """Manage global aliases for commands"""
         if ctx.invoked_subcommand is None:
             await send_cmd_help(ctx)
 
-    @galias.command(name="add", pass_context=True, no_pm=True)
+    @galias.command(name="add", pass_context=True)
     @checks.is_owner()
     async def _add_alias(self, ctx, command, *, to_execute):
         """Add a global alias for a command
@@ -49,7 +49,7 @@ class GlobalAlias:
             await self.bot.say("Cannot add '{}' because it's a real bot "
                                "command.".format(command))
 
-    @galias.command(name="help", pass_context=True, no_pm=True)
+    @galias.command(name="help", pass_context=True)
     async def _help_alias(self, ctx, command):
         """Tries to execute help for the base command of the alias"""
         if command in self.aliases:
@@ -71,7 +71,7 @@ class GlobalAlias:
         else:
             await self.bot.say("That alias doesn't exist.")
 
-    @galias.command(name="del", pass_context=True, no_pm=True)
+    @galias.command(name="del", pass_context=True)
     @checks.is_owner()
     async def _del_alias(self, ctx, command):
         """Deletes an alias"""
@@ -83,7 +83,7 @@ class GlobalAlias:
         else:
             await self.bot.say("That alias doesn't exist.")
 
-    @galias.command(name="list", pass_context=True, no_pm=True)
+    @galias.command(name="list", pass_context=True)
     async def _alias_list(self, ctx):
         """Lists global command aliases"""
         header = "Alias list:\n"
