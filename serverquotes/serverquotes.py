@@ -26,19 +26,22 @@ class ServerQuotes:
         sid = ctx.message.server.id
         if sid not in self.quotes or len(self.quotes[sid]) == 0:
             raise AssertionError("There are no quotes in this server!")
-        return randchoice(self.quotes[sid])
+        quotes = list(enumerate(self.quotes[sid]))
+        return randchoice(quotes)
 
     def _get_random_author_quote(self, ctx, author):
         sid = ctx.message.server.id
-        if isinstance(author, discord.User):
-            uid = author.id
-            quotes = [q for q in self.quotes[sid] if q['author_id'] == uid]
-        else:
-            quotes = [q for q in self.quotes[sid] if q['author_name'] == author]
 
         if sid not in self.quotes or len(self.quotes[sid]) == 0:
             raise AssertionError("There are no quotes in this server!")
-        elif len(quotes) == 0:
+
+        if isinstance(author, discord.User):
+            uid = author.id
+            quotes = [(i,q) for i,q in enumerate(self.quotes[sid]) if q['author_id'] == uid]
+        else:
+            quotes = [(i,q) for i,q in enumerate(self.quotes[sid]) if q['author_name'] == author]
+
+        if len(quotes) == 0:
             raise commands.BadArgument("There are no quotes by %s." % author)
         return randchoice(quotes)
 
@@ -67,22 +70,27 @@ class ServerQuotes:
 
     def _quote_author(self, ctx, quote):
         if quote['author_id']:
-            return self._get_name_by_id(ctx, quote['author_id'])
+            name = self._get_name_by_id(ctx, quote['author_id'])
+            if quote['author_name'] and not name:
+                name = quote['author_name'] 
+                name += " (non-present user ID#%s)" % (quote['author_id'])
+            return name
         elif quote['author_name']:
             return quote['author_name']
         else:
             return "Unknown"
 
     def _format_quote(self, ctx, quote):
+        qid, quote = quote
         author = self._quote_author(ctx, quote)
-        return '"%s"\n—%s' % (quote['text'], author)
+        return '"%s"\n—%s (quote #%i)' % (quote['text'], author, qid + 1)
 
     def _get_name_by_id(self, ctx, uid):
         member = discord.utils.get(ctx.message.server.members, id=uid)
         if member:
             return member.display_name
         else:
-            return "(nonexistent user ID#%s)" % uid
+            return None
 
     def _get_quote(self, ctx, author_or_num=None):
         sid = ctx.message.server.id
@@ -92,7 +100,7 @@ class ServerQuotes:
             try:
                 quote_id = int(author_or_num)
                 if quote_id > 0 and quote_id <= len(self.quotes[sid]):
-                    return self.quotes[sid][quote_id - 1]
+                    return (quote_id - 1, self.quotes[sid][quote_id - 1])
                 else:
                     raise commands.BadArgument("Quote #%i does not exist." % quote_id)
             except ValueError:
@@ -114,8 +122,9 @@ class ServerQuotes:
            Use [p]lsquotes to find quote numbers
            Example: !delquote 3"""
         sid = ctx.message.server.id
+        num += 1
         if num > 0 and num <= len(self.quotes[sid]):
-            del self.quotes[sid][num - 1]
+            del self.quotes[sid][num]
             await self.bot.say("Quote #%i deleted." % num)
             dataIO.save_json(JSON, self.quotes)
         else:
@@ -135,9 +144,10 @@ class ServerQuotes:
             text = q['text']
             if len(text) > 60:
                 text = text[:60 - 3] + '...'
-            table.append((i + 1, self._quote_author(ctx, q),
-                          self._get_name_by_id(ctx, q['added_by']),
-                          text))
+            name = self._get_name_by_id(ctx, q['added_by'])
+            if not name:
+                name = "(non-present user ID#%s)" % q['added_by']
+            table.append((i + 1, self._quote_author(ctx, q), name, text))
         tabulated = tabulate(table, header)
         for page in pagify(tabulated, ['\n']):
             await self.bot.say('```\n%s\n```' % page)
