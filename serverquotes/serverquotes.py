@@ -122,9 +122,8 @@ class ServerQuotes:
            Use [p]lsquotes to find quote numbers
            Example: !delquote 3"""
         sid = ctx.message.server.id
-        num += 1
         if num > 0 and num <= len(self.quotes[sid]):
-            del self.quotes[sid][num]
+            del self.quotes[sid][num-1]
             await self.bot.say("Quote #%i deleted." % num)
             dataIO.save_json(JSON, self.quotes)
         else:
