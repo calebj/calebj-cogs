@@ -1,8 +1,8 @@
 import discord
 import os
 import socket
-import json
 import logging
+
 
 # Copied from https://github.com/bb4242/sdnotify/
 # Copyright (c) 2016 Brett Bethke
@@ -27,6 +27,7 @@ class SystemdNotifier:
             if self.debug:
                 raise
 
+
 class Watchdog:
     def __init__(self, bot):
         self.bot = bot
@@ -40,12 +41,7 @@ class Watchdog:
     async def on_ready(self):
         self.pet_watchdog()
 
-    async def on_socket_raw_receive(self, data):
-            # no binary frames
-            if isinstance(data, bytes):
-                return
-
-            data = json.loads(data)
+    async def on_socket_response(self, data):
             op = data.get('op')
             if op == discord.gateway.DiscordWebSocket.HEARTBEAT_ACK:
                 self.pet_watchdog()
