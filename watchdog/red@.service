@@ -8,7 +8,6 @@ User=red
 Group=red
 WorkingDirectory=/srv/red/%i/
 ExecStart=/usr/bin/python3.5 /srv/red/%i/red.py --no-prompt
-ExecReload=/usr/bin/python3.5 /srv/red/%i/red.py --no-prompt
 
 # If set to "on-failure" Red will only restart when it crashed or froze, but not when [p]shutdown is used. (froze untested)
 # If set to "always" Red will always attempt to restart regardless of how it was turned off.
