@@ -38,7 +38,8 @@ class GlobalAlias:
         if self.part_of_existing_command(command):
             await self.bot.say("'%s' is already a command or alias." % command)
             return
-        prefix = self.get_prefix(to_execute)
+        server = ctx.message.server
+        prefix = self.get_prefix(server, to_execute)
         if prefix is not None:
             to_execute = to_execute[len(prefix):]
         if command not in self.bot.commands:
@@ -56,7 +57,7 @@ class GlobalAlias:
             help_cmd = self.aliases[command].split(" ")[0]
             new_content = ctx.prefix
             new_content += "help "
-            new_content += help_cmd[len(self.get_prefix(help_cmd)):]
+            new_content += help_cmd[len(ctx.prefix):]
             message = ctx.message
             message.content = new_content
             await self.bot.process_commands(message)
@@ -105,12 +106,13 @@ class GlobalAlias:
                 page = '```\n%s\n```' % page
             await self.bot.say(page)
 
-    async def check_aliases(self, message):
+    async def on_message(self, message):
         if not user_allowed(message):
             return
 
         msg = message.content
-        prefix = self.get_prefix(msg)
+        server = message.server
+        prefix = self.get_prefix(server, msg)
 
         if prefix:
             alias = self.first_word(msg[len(prefix):]).lower()
@@ -131,8 +133,9 @@ class GlobalAlias:
     def first_word(self, msg):
         return msg.split(" ")[0]
 
-    def get_prefix(self, msg):
-        for p in self.bot.command_prefix:
+    def get_prefix(self, server, msg):
+        prefixes = self.bot.settings.get_prefixes(server)
+        for p in prefixes:
             if msg.startswith(p):
                 return p
         return None
@@ -141,7 +144,7 @@ class GlobalAlias:
 def convert_old_data():
     """Moves recognizable global aliases from regular alias/ to galias/"""
     new_mod = {}
-    if os.path.exists(OLD_JSON):
+    if os.path.exists(OLD_JSON) and not os.path.exists(JSON):
         old_data = dataIO.load_json(OLD_JSON)
         old_mod = old_data.copy()
         for key, d in old_data.items():
@@ -167,8 +170,6 @@ def check_file():
 
 def setup(bot):
     check_folder()
-    check_file()
     convert_old_data()
-    n = GlobalAlias(bot)
-    bot.add_listener(n.check_aliases, "on_message")
-    bot.add_cog(n)
+    check_file()
+    bot.add_cog(GlobalAlias(bot))
