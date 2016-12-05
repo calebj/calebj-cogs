@@ -1,7 +1,7 @@
 {
     "AUTHOR" : "CalebJ",
     "INSTALL_MSG" : "Done.",
-    "NAME" : "Global aliases",
+    "NAME" : "Global custom commands.",
     "SHORT" : "Define global custom commands.",
     "DESCRIPTION" : "Define global custom commands. Similar to customcom, but only the bot owner can modify commands."
 }
