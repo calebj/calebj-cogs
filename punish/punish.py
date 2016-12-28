@@ -363,7 +363,7 @@ class Punish:
             perms.speak = False
         if not role:
             role = discord.utils.get(c.server.roles, name=self.role_name)
-        await self.bot.edit_channel_permissions(c, role, perms)
+        await self.bot.edit_channel_permissions(c, role, overwrite=perms)
 
     async def on_member_update(self, before, after):
         """Remove scheduled unpunish when manually removed"""
