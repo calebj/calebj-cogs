@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "GrumpiestVulcan (CalebJ)",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "DataDog",
+    "SHORT" : "Sends various bot statistics to a running statsd instance.",
+    "DESCRIPTION" : ""
+}
