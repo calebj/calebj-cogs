@@ -1,6 +1,7 @@
 import asyncio
 from discord import ChannelType
 import datetime
+import os
 from cogs.utils.dataIO import dataIO
 
 PATH = 'data/datadog/'
@@ -109,7 +110,6 @@ class DataDog:
         if self is self.bot.get_cog('DataDog'):
             self.task = self.bot.loop.create_task(self.loop_task())
 
-
     async def on_channel_create(self, channel):
         if channel.type == 'text':
             self.send_channels()
@@ -174,4 +174,6 @@ def check_files():
 
 
 def setup(bot):
+    check_folders()
+    check_files()
     bot.add_cog(DataDog(bot))
