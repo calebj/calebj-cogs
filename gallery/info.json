@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "GrumpiestVulcan (CalebJ)",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Gallery",
+    "SHORT" : "Automatically delete non-relevant posts in a gallery channel.",
+    "DESCRIPTION" : "Use emotes to indicate whether messages older than a certain age should be deleted. Only posts by members with the artist role or bot mods or admins containing the pin emotes, or having reactions of same by same, will be kept. The last 2000 messages are checked every 5 minutes."
+}
