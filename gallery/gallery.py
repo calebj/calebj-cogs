@@ -132,7 +132,8 @@ class Gallery:
                     r_pin = True
                     break
 
-        return expired and not (privileged and (attachment or e_pin or r_pin))
+        return expired and not (privileged and (attachment or e_pin or
+                                                r_pin or message.pinned))
 
     async def cleanup_task(self, channel: discord.Channel) -> None:
         try:
