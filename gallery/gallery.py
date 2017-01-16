@@ -61,8 +61,10 @@ DEFAULTS = {
     'ENABLED'     : False,
     'ARTIST_ROLE' : 'artist',
     'EXPIRATION'  : _parse_time(DEFAULT_EXPIRATION),
-    'PIN_EMOTES'  : ['\N{ARTIST PALETTE}', '\N{PUSHPIN}']
+    'PIN_EMOTES'  : ['\N{ARTIST PALETTE}', '\N{PUSHPIN}'],
+    'PRIV_ONLY'   : False
 }
+RM_EMOTES = ['❌']
 
 
 class CleanupError(Exception):
@@ -106,36 +108,42 @@ class Gallery:
         server = message.server
         author = message.author
         settings = self.settings_for(message.channel)
+        priv_only = settings.get('PRIV_ONLY', False)
 
         mod_role = self.bot.settings.get_server_mod(server).lower()
         admin_role = self.bot.settings.get_server_admin(server).lower()
         artist_role = settings['ARTIST_ROLE'].lower()
-        priv_roles = set((mod_role, admin_role, artist_role))
+        priv_roles = [mod_role, admin_role]
         privileged = False
         if isinstance(author, discord.Member):
-            privileged = any(r.name.lower() in priv_roles for r in author.roles)
+            privileged = any(r.name.lower() in priv_roles + [artist_role]
+                             for r in author.roles)
 
         message_age = (datetime.utcnow() - message.timestamp).total_seconds()
         expired = message_age > settings['EXPIRATION']
 
-        attachment = bool(message.attachments)
+        attachment = bool(message.attachments) or bool(message.embeds)
 
         e_pin = any(e in message.content for e in settings['PIN_EMOTES'])
         r_pin = False
+        x_pin = False
         for reaction in message.reactions:
-            if reaction.emoji not in settings['PIN_EMOTES']:
+            if reaction.emoji not in settings['PIN_EMOTES'] + RM_EMOTES:
                 continue
             users = await self.bot.get_reaction_users(reaction)
             for user in users:
                 member = server.get_member(user.id)
                 if not member:
                     continue
-                if any(r.name.lower() in priv_roles for r in member.roles):
-                    r_pin = True
-                    break
-
-        return expired and not (privileged and (attachment or e_pin or
-                                                r_pin or message.pinned))
+                if reaction.emoji in RM_EMOTES and not x_pin:
+                    x_pin |= any(r.name.lower() in priv_roles
+                                 for r in member.roles)
+                elif not r_pin:
+                    r_pin |= any(r.name.lower() in priv_roles + [artist_role]
+                                 for r in member.roles)
+        pinned = e_pin or r_pin or message.pinned
+        keep = pinned or attachment and not (priv_only and not privileged)
+        return expired and (x_pin or not keep)
 
     async def cleanup_task(self, channel: discord.Channel) -> None:
         try:
@@ -212,6 +220,23 @@ class Gallery:
                     return
                 self.update_setting(channel, 'ENABLED', on_off)
                 await self.bot.say('Gallery curation %s.' % adj)
+
+    @galset.command(pass_context=True, allow_dm=False)
+    async def privonly(self, ctx, on_off: bool = None):
+        """Set whether only privileged users' messages are kept
+
+        If disabled (default), all attachments and embeds are kept."""
+        channel = ctx.message.channel
+        adj = 'enabled' if on_off else 'disabled'
+        if not self.enabled_in(channel):
+            await self.bot.say('Gallery cog not enabled in this channel')
+        else:
+            priv_only = self.settings_for(channel).get('PRIV_ONLY', False)
+            if on_off == priv_only:
+                await self.bot.say('Privileged-only posts already %s.' % adj)
+            else:
+                self.update_setting(channel, 'PRIV_ONLY', on_off)
+                await self.bot.say('Privileged-only posts %s.' % adj)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def age(self, ctx, timespec: str = None):
