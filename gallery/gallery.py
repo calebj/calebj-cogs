@@ -111,7 +111,9 @@ class Gallery:
         admin_role = self.bot.settings.get_server_admin(server).lower()
         artist_role = settings['ARTIST_ROLE'].lower()
         priv_roles = set((mod_role, admin_role, artist_role))
-        privileged = any(r.name.lower() in priv_roles for r in author.roles)
+        privileged = False
+        if isinstance(author, discord.Member):
+            privileged = any(r.name.lower() in priv_roles for r in author.roles)
 
         message_age = (datetime.utcnow() - message.timestamp).total_seconds()
         expired = message_age > settings['EXPIRATION']
