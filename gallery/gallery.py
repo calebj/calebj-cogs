@@ -141,7 +141,7 @@ class Gallery:
                 elif not r_pin:
                     r_pin |= any(r.name.lower() in priv_roles + [artist_role]
                                  for r in member.roles)
-        pinned = e_pin or r_pin or message.pinned
+        pinned = r_pin or message.pinned or (e_pin and privileged)
         keep = pinned or attachment and not (priv_only and not privileged)
         return expired and (x_pin or not keep)
 
