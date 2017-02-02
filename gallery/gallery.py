@@ -158,27 +158,32 @@ class Gallery:
 
     async def loop_task(self):
         await self.bot.wait_until_ready()
-        start = time()
+        try:
+            while True:
+                start = time()
 
-        tasks = []
-        for cid, d in self.settings.items():
-            if not d['ENABLED']:
-                continue
-            channel = self.bot.get_channel(cid)
-            if not channel:
-                logger.warning('Attempted to curate nonexistent channel ID ' +
-                               cid)
-                continue
-            tasks.append(self.cleanup_task(channel))
+                tasks = []
+                for cid, d in self.settings.items():
+                    if not d['ENABLED']:
+                        continue
+                    channel = self.bot.get_channel(cid)
+                    if not channel:
+                        logger.warning('Attempted to curate missing channel '
+                                       'ID #%s, disabling.' % cid)
+                        self.update_setting(channel, 'ENABLED', False)
+                        continue
+                    tasks.append(self.cleanup_task(channel))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for res in results:
-            if isinstance(res, CleanupError):
-                logger.exception("Exception cleaning in %s #%s:"
-                                 % (res.channel.server, res.channel),
-                                 exc_info=res.original)
-        elapsed = time() - start
-        await asyncio.sleep(POLL_INTERVAL - elapsed)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in results:
+                    if isinstance(res, CleanupError):
+                        logger.exception("Exception cleaning in %s #%s:"
+                                         % (res.channel.server, res.channel),
+                                         exc_info=res.original)
+                elapsed = time() - start
+                await asyncio.sleep(POLL_INTERVAL - elapsed)
+        except asyncio.CancelledError:
+            pass
 
     @commands.group(pass_context=True, allow_dm=False)
     async def galset(self, ctx):
@@ -190,9 +195,7 @@ class Gallery:
     async def emotes(self, ctx, *emotes):
         """Show or update the emotes used to indicate artwork"""
         channel = ctx.message.channel
-        if not self.enabled_in(channel):
-            await self.bot.say('Gallery cog not enabled in this channel')
-        elif not emotes:
+        if not emotes:
             em = self.settings_for(channel)['PIN_EMOTES']
             await self.bot.say('Pin emotes for this channel: ' + ' '.join(em))
         else:
@@ -228,23 +231,18 @@ class Gallery:
         If disabled (default), all attachments and embeds are kept."""
         channel = ctx.message.channel
         adj = 'enabled' if on_off else 'disabled'
-        if not self.enabled_in(channel):
-            await self.bot.say('Gallery cog not enabled in this channel')
+        priv_only = self.settings_for(channel).get('PRIV_ONLY', False)
+        if on_off == priv_only:
+            await self.bot.say('Privileged-only posts already %s.' % adj)
         else:
-            priv_only = self.settings_for(channel).get('PRIV_ONLY', False)
-            if on_off == priv_only:
-                await self.bot.say('Privileged-only posts already %s.' % adj)
-            else:
-                self.update_setting(channel, 'PRIV_ONLY', on_off)
-                await self.bot.say('Privileged-only posts %s.' % adj)
+            self.update_setting(channel, 'PRIV_ONLY', on_off)
+            await self.bot.say('Privileged-only posts %s.' % adj)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def age(self, ctx, timespec: str = None):
         """Set the maximum age of non-art posts"""
         channel = ctx.message.channel
-        if not self.enabled_in(channel):
-            await self.bot.say('Gallery cog not enabled in this channel')
-        elif not timespec:
+        if not timespec:
             sec = self.settings_for(channel)['EXPIRATION']
             await self.bot.say('Current maximum age is %s.'
                                % _generate_timespec(sec))
@@ -257,9 +255,7 @@ class Gallery:
     async def role(self, ctx, role: discord.Role = None):
         """Sets the artist role"""
         channel = ctx.message.channel
-        if not self.enabled_in(channel):
-            await self.bot.say('Gallery cog not enabled in this channel')
-        elif role is None:
+        if role is None:
             role = self.settings_for(channel)['ARTIST_ROLE']
             await self.bot.say('Artist role is currently %s' % role)
         else:
