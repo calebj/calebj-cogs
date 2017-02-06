@@ -136,7 +136,7 @@ BODYPARTS = [
     'other knee'
 ]
 
-VERB_IND_SUB = {'munch': 'munches'}
+VERB_IND_SUB = {'munch': 'munches', 'toss': 'tosses'}
 
 ATTACK = {"{a} {v} their {o} at {d}!": indicatize(WEAPONS),
           "{a} {v} their {o} into {d}!": indicatize(MELEE),
@@ -228,7 +228,6 @@ WEIGHTED_MOVES = {'CRITICAL': 0.05, 'ATTACK': 1, 'FUMBLE': 0.1, 'HEAL': 0.1}
 
 
 class Player:
-
     def __init__(self, cog, member, initial_hp=INITIAL_HP):
         self.hp = initial_hp
         self.member = member
@@ -237,7 +236,7 @@ class Player:
 
     # Using object in string context gives (nick)name
     def __str__(self):
-        return self.member.nick if self.member.nick else self.member.name
+        return self.member.display_name
 
     # helpers for stat functions
     def _set_stat(self, stat, num):
@@ -250,6 +249,9 @@ class Player:
     def _get_stat(self, stat):
         stats = self.cog._get_stats(self)
         return stats[stat] if stats and stat in stats else 0
+
+    def get_state(self):
+        return {k: self._get_stat(k) for k in ('wins', 'losses', 'draws')}
 
     # Race-safe, directly usable properties
     @property
@@ -300,6 +302,12 @@ class Duel:
             return None
         else:
             return self.duelists[serverid][userid]
+
+    def get_player(self, user: discord.Member):
+        return Player(self, user)
+
+    def get_all_players(self, server: discord.Server):
+        return [self.get_player(m) for m in server.members]
 
     @checks.mod_or_permissions(administrator=True)
     @commands.command(name="protect", pass_context=True)
