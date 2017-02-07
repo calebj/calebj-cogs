@@ -434,6 +434,7 @@ class Duel:
         else:
             author = ctx.message.author
             server = ctx.message.server
+            channel = ctx.message.channel
             duelists = self.duelists.get(server.id, {})
             p1 = Player(self, author)
             p2 = Player(self, user)
@@ -449,6 +450,8 @@ class Duel:
                 await self.bot.reply("you can't duel anyone while you're on "
                                      " the protected users list.")
                 return
+
+            self.bot.dispatch('duel', channel=channel, players=(p1, p2))
 
             order = [(p1, p2), (p2, p1)]
             random.shuffle(order)
@@ -479,12 +482,15 @@ class Duel:
                 for p, delim in [(victor, '; '), (loser, '.')]:
                     msg += '%s has %d wins, %d losses, %d draws%s' % (p, p.wins, p.losses, p.draws, delim)
             else:
+                victor=None
                 for p in [p1, p2]:
                     p.draws += 1
                 msg = 'After %d rounds, the duel ends in a tie!' % (i + 1)
 
             # append stats
             await self.bot.say(msg)
+            self.bot.dispatch('duel_completion', channel=channel,
+                              players=(p1,p2), victor=victor)
 
     def generate_action(self, attacker, defender, move_cat=None):
         # Select move category
