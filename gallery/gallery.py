@@ -88,8 +88,8 @@ class Gallery:
 
     def settings_for(self, channel: discord.Channel) -> dict:
         cid = channel.id
-        # if cid not in self.settings:
-        #     return DEFAULTS
+        if cid not in self.settings:
+            return DEFAULTS
         return self.settings[cid]
 
     def update_setting(self, channel: discord.Channel, key: str, val) -> None:
@@ -209,8 +209,10 @@ class Gallery:
     async def turn(self, ctx, on_off: bool = None):
         """Turn gallery message curation on or off"""
         channel = ctx.message.channel
+        current = self.settings_for(channel)['ENABLED']
         perms = channel.permissions_for(channel.server.me).manage_messages
-        adj = 'enabled' if on_off else 'disabled'
+        adj_bool = current if on_off is None else on_off
+        adj = 'enabled' if adj_bool else 'disabled'
         if on_off is None:
             await self.bot.say('Gallery cog is %s in this channel.' % adj)
         else:
