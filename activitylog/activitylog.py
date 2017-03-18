@@ -21,7 +21,7 @@ ATTACHMENT_TEMPLATE = (AUTHOR_TEMPLATE + ": {0.clean_content} (attachment "
                        "saved to {1})")
 
 # 0 is before, 1 is after, 2 is formatted timestamp
-EDIT_TEMPLATE = (AUTHOR_TEMPLATE+" edited message from {2} "
+EDIT_TEMPLATE = (AUTHOR_TEMPLATE + " edited message from {2} "
                  "({0.clean_content}) to read: {1.clean_content}")
 
 # 0 is deleted message, 1 is formatted timestamp
@@ -31,18 +31,18 @@ DELETE_TEMPLATE = (AUTHOR_TEMPLATE + " deleted message from {1} "
 
 class LogHandle:
     """basic wrapper for logfile handles, used to keep track of stale handles"""
-    def __init__(self, path, time=datetime.utcnow(), mode='a', buf=1):
+    def __init__(self, path, time=None, mode='a', buf=1):
         self.handle = open(path, mode, buf, errors='backslashreplace')
-        self.time = time
-
-    def touch(self):
-        self.time = datetime.utcnow()
+        if time:
+            self.time = time
+        else:
+            self.time = datetime.fromtimestamp(os.path.getmtime(path))
 
     def close(self):
         self.handle.close()
 
     def write(self, value):
-        self.touch()
+        self.time = datetime.utcnow()
         self.handle.write(value)
 
 
@@ -172,18 +172,22 @@ class ActivityLogger(object):
 
     def gethandle(self, path, mode='a'):
         """Manages logfile handles, culling stale ones and creating folders"""
-        if path in self.handles and os.path.exists(path):
-            return self.handles[path]
-        elif path in self.handles:  # file was deleted
-            self.handles[path].close()
-            del self.handles[path]
-            return self.gethandle(path, mode)
+        if path in self.handles:
+            if os.path.exists(path):
+                return self.handles[path]
+            else:  # file was deleted?
+                try:  # try to close, no guarantees tho
+                    self.handles[path].close()
+                except:
+                    pass
+                del self.handles[path]
+                return self.gethandle(path, mode)
         else:
             # Clean up excess handles before creating a new one
             if len(self.handles) >= 256:
-                oldest_path = sorted(self.handles.items(),
-                                     key=lambda x: x[1].time)[0][0]
-                self.handles[oldest_path].close()
+                chrono = sorted(self.handles.items(), key=lambda x: x[1].time)
+                oldest_path, oldest_handle = chrono[0]
+                oldest_handle.close()
                 del self.handles[oldest_path]
 
             dirname, _ = os.path.split(path)
@@ -201,20 +205,24 @@ class ActivityLogger(object):
     def should_log(self, location):
         if self.settings.get('everything', False):
             return True
+
         default = self.settings.get('default', False)
+
         if type(location) is discord.Server:
             if location.id in self.settings:
                 loc = self.settings[location.id]
                 return loc.get('all', False) or loc.get('events', default)
+
         elif type(location) is discord.Channel:
             if location.server.id in self.settings:
                 loc = self.settings[location.server.id]
                 return loc.get('all', False) or loc.get(location.id, default)
+
         elif type(location) is discord.PrivateChannel:
             return self.settings.get('direct', default)
-        else:
+
+        else:  # can't log other types
             return False
-        return default
 
     def should_download(self, msg):
         return self.should_log(msg.channel) and \
@@ -294,9 +302,11 @@ class ActivityLogger(object):
     async def on_server_join(self, server):
         entry = 'this bot joined the server'
         self.log(server, entry)
+
     async def on_server_remove(self, server):
         entry = 'this bot left the server'
         self.log(server, entry)
+
     async def on_server_update(self, before, after):
         entries = []
         if before.owner != after.owner:
@@ -317,9 +327,11 @@ class ActivityLogger(object):
     async def on_server_role_create(self, role):
         entry = "Role created: '%s' (id %s)" % (role, role.id)
         self.log(role.server, entry)
+
     async def on_server_role_delete(self, role):
         entry = "Role deleted: '%s' (id %s)" % (role, role.id)
         self.log(role.server, entry)
+
     async def on_server_role_update(self, before, after):
         entries = []
         if before.name != after.name:
@@ -351,15 +363,19 @@ class ActivityLogger(object):
     async def on_member_join(self, member):
         entry = 'Member join: @{0} (id {0.id})'.format(member)
         self.log(member.server, entry)
+
     async def on_member_remove(self, member):
         entry = 'Member leave: @{0} (id {0.id})'.format(member)
         self.log(member.server, entry)
+
     async def on_member_ban(self, member):
         entry = 'Member ban: @{0} (id {0.id})'.format(member)
         self.log(member.server, entry)
+
     async def on_member_unban(self, server, user):
         entry = 'Member unban: @{0} (id {0.id})'.format(user)
         self.log(server, entry)
+
     async def on_member_update(self, before, after):
         entries = []
         if before.nick != after.nick:
@@ -385,11 +401,13 @@ class ActivityLogger(object):
             return
         entry = 'Channel created: %s' % channel
         self.log(channel.server, entry)
+
     async def on_channel_delete(self, channel):
         if channel.is_private:
             return
         entry = 'Channel deleted: %s' % channel
         self.log(channel.server, entry)
+
     async def on_channel_update(self, before, after):
         if type(before) is discord.PrivateChannel:
             return
@@ -419,7 +437,7 @@ def check_files():
             'everything': False,
             'attachments': False,
             'default': False
-            }
+        }
         dataIO.save_json(JSON, defaults)
 
 

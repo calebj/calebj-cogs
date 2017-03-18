@@ -356,18 +356,20 @@ class Punish:
 
     # Listeners
 
-    async def on_channel_create(self, c, role=None):
+    async def on_channel_create(self, c):
         """Run when new channels are created and set up role permissions"""
-        if c.is_private:
+        role = discord.utils.get(c.server.roles, name=self.role_name)
+        if not role or c.is_private:
             return
+
         perms = discord.PermissionOverwrite()
+
         if c.type == discord.ChannelType.text:
             perms.send_messages = False
             perms.send_tts_messages = False
         elif c.type == discord.ChannelType.voice:
             perms.speak = False
-        if not role:
-            role = discord.utils.get(c.server.roles, name=self.role_name)
+
         await self.bot.edit_channel_permissions(c, role, overwrite=perms)
 
     async def on_member_update(self, before, after):
