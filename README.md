@@ -80,7 +80,6 @@ If your bot's nickname is Squid, you would do the following (as root):
 # id -u red 2>/dev/null || useradd red -r -U -d /srv/red/
 # mv Red-DiscordBot /srv/red/squid
 # chown red:red /srv/red -R
-# systemctl daemon-reload
 # systemctl enable --now red@squid
 ```
 
