@@ -8,15 +8,18 @@ If you have questions or would like some support for these cogs, please head ove
 
 ## Description of cogs
 * activitylog: Log DM messages, server changes, and even attachments. See below.
-* ~~bartender~~: Removed because changes were merged into [Mash's repo](https://github.com/Canule/Mash-Cogs/).
+* customgcom: Custom global commands.
+* datadog: Publish various metrics and events to a local statsd instance.
+* description: Change the header of Red's [p]help command.
 * duel: Procedurally generated duel with a flexible lexicon system.
 * galias: Bot-wide command aliases. Only owner can add/remove them.
-* mute: Adds a Mute role and removes it after a prescribed time.
+* gallery: clean up comments from channels focused on embedded content.
 * punish: Zero-configuration timed mute with evasion protection.
 * purgepins: Delete pin notification messages after a per-channel interval. 
 * recensor: Create inclusive or exclusive regex filters per channel or server.
 * serverquotes: Store and recall memorable quotes for your server.
-* watchdog: Interfaces with systemd watchdog to restart bot if it goes offline.
+* sinfo: Simple text dump of server and channel information.
+* watchdog: Helps systemd restart your bot if it goes offline. See below.
 * zalgo: HE COMES.
 
 
@@ -40,5 +43,48 @@ If you have questions or would like some support for these cogs, please head ove
   * If this is `on`, the bot will log everything, period.
 
 \* note: Currently, changes in channel permission overrides (role-specific allow/deny) are not logged. Furthermore, discord currently does not have a way to tell *who* changed something, only that it changed.
+
+
+## How do I use watchdog?  
+First of all, if you aren't running your bot on a Linux machine with systemd,
+you can't use this cog.  
+It just won't do anything for you. No exceptions.  
+
+With that out of the way, sone important information:  
+This cog doesn't actually restart your bot for you. Systemd has to do that.
+All the cog does is periodically send systemd messages that everything is working.
+The service has to be configured to use these messages by adding:
+
+```
+# Discord hearbeat is about every 40 seconds. Using 90 to be safe from false restarts.
+WatchdogSec=90
+```
+
+to your service unit. As long as the environment variables from systemd are
+passed through to the bot (i.e. you aren't using a launcher), the cog will
+know where to send the OK messages.
+
+If you are new to systemd, you can use the provided 
+[`red@.service`](watchdog/red@.service) unit template.
+It assumes that:
+1. there exists a user and group named `red` for your bot to run under
+2. the bot files are located in `/srv/red/<some name>/`
+3. all files in 2 are owned by user `red` and group `red`
+4. you enable and start the service as `red@<some name>`
+
+Assuming your bot is set up (i.e. token set, etc) and is located in a folder
+named `Red-DiscordBot`; and that `red@.service` is in `/etc/systemd/system/`:  
+If your bot's nickname is Squid, you would do the following (as root):
+```sh
+# mkdir -p /srv/red/
+# id -u red 2>/dev/null || useradd red -r -U -d /srv/red/
+# mv Red-DiscordBot /srv/red/squid
+# chown red:red /srv/red -R
+# systemctl daemon-reload
+# systemctl enable --now red@squid
+```
+
+After which your bot should now be running (check with `systemctl status red@squid`).
+
 
 If my cogs have made your life easier, consider donating through [paypal](https://paypal.me/calebrj) or [becoming a patron](https://www.patreon.com/calebj).
