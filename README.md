@@ -50,7 +50,7 @@ First of all, if you aren't running your bot on a Linux machine with systemd,
 you can't use this cog.  
 It just won't do anything for you. No exceptions.  
 
-With that out of the way, sone important information:  
+With that out of the way, some important information:  
 This cog doesn't actually restart your bot for you. Systemd has to do that.
 All the cog does is periodically send systemd messages that everything is working.
 The service has to be configured to use these messages by adding:
