@@ -7,7 +7,7 @@ If you have questions or would like some support for these cogs, please head ove
 
 
 ## Description of cogs
-* activitylog: Log DM messages, server changes, and even attachments. See below.
+* activitylog: Log messages, attachments, and server changes to disk. See below.
 * customgcom: Custom global commands.
 * datadog: Publish various metrics and events to a local statsd instance.
 * description: Change the header of Red's [p]help command.
@@ -20,13 +20,18 @@ If you have questions or would like some support for these cogs, please head ove
 * serverquotes: Store and recall memorable quotes for your server.
 * sinfo: Simple text dump of server and channel information.
 * watchdog: Helps systemd restart your bot if it goes offline. See below.
-* zalgo: HE COMES.
+* zalgo: H͕̭͒̈́E̡̩͋͐ C̺̻̉O̟͋M̞̐Ę͒ͅS̬̣̍́.
 
 
-## What does activitylog record?\*
+## What does activitylog do?
+This cog saves messages and DMs, attachments, and updates to server settings
+to logfiles in your bot's data folder. There is no support for uploading
+logfiles yet, though it is planned. Logging of embed contents and posting
+events in a channel are not planned features.
+
 * Channel messages (per-channel): `logset channel {on|off} [#channel-name]`
   * Includes edits and deletions
-* Server events (per-server): `logset events {on|off}`
+* Server events\* (per-server): `logset events {on|off}`
   * Member changes: nickname, username, roles, join/leave, ban, kick
   * Server changes: name, region, owner, icon
   * Channel changes: create, delete, name, position, topic
@@ -40,9 +45,12 @@ If you have questions or would like some support for these cogs, please head ove
   * If you haven't set an option on or off, this default is used.
   * Server override, global override, and attachments don't use this.
 * Global override: `logset everything {on|off}`
-  * If this is `on`, the bot will log everything, period.
+  * If this is `on`, the bot will log everything.
+  * Attachment downloading is still its own setting.
 
-\* note: Currently, changes in channel permission overrides (role-specific allow/deny) are not logged. Furthermore, discord currently does not have a way to tell *who* changed something, only that it changed.
+\* note: Currently, changes in channel permission overrides (role-specific
+allow/deny) are not logged. Furthermore, discord currently does not have a
+way to tell *who* changed something, only that it changed.
 
 
 ## How do I use watchdog?  
