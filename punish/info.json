@@ -1,7 +1,9 @@
 {
     "AUTHOR" : "Kowlin and CalebJ",
-    "INSTALL_MSG" : "Thanks for installing Punish",
+    "INSTALL_MSG" : "Thanks for installing Punish.",
     "NAME" : "Punish",
     "SHORT" : "Punish a misbehaving user.",
-    "DESCRIPTION" : "Punish a misbehaving user. This places a user into timeout, removing his permission to talk on ALL channels."
+    "DESCRIPTION" : "Punish a misbehaving user. This places a user into timeout, removing his permission to talk on ALL channels.",
+    "REQUIREMENTS": ["tabulate"],
+    "TAGS" : ["utility", "punish", "mod", "mute", "moderation"]
 }
