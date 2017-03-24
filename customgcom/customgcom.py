@@ -1,4 +1,5 @@
 from discord.ext import commands
+from .utils.chat_formatting import pagify, box
 from .utils.dataIO import dataIO
 from .utils import checks
 import os
@@ -13,10 +14,22 @@ class CustomGlobalCommands:
 
     def __init__(self, bot):
         self.bot = bot
-        self.c_commands = dataIO.load_json(JSON)
+        data = dataIO.load_json(JSON)
+        version = data.get('_CGCOM_VERSION', 1)
+        if version < 2:
+            self.c_commands = data
+            self.aliases = {}
+            self.save()
+        else:
+            self.c_commands = data.get('COMMANDS', {})
+            self.aliases = data.get('ALIASES', {})
 
     def save(self):
-        dataIO.save_json(JSON, self.c_commands)
+        data = {'COMMANDS': self.c_commands,
+                'ALIASES': self.aliases,
+                '_CGCOM_VERSION': 2
+                }
+        dataIO.save_json(JSON, data)
 
     @commands.command(pass_context=True)
     @checks.is_owner()
@@ -28,8 +41,9 @@ class CustomGlobalCommands:
         """
         command = command.lower()
         if command in self.bot.commands:
-            await self.bot.say("That command is already a standard command.")
+            await self.bot.say("That command is already a normal command.")
             return
+
         if command not in self.c_commands:
             self.c_commands[command] = text
             self.save()
@@ -37,8 +51,7 @@ class CustomGlobalCommands:
         else:
             await self.bot.say("This command already exists. Are you sure "
                                "you want to redefine it? [y/N]")
-            response = await self.bot.wait_for_message(
-                                                    author=ctx.message.author)
+            response = await self.bot.wait_for_message(author=ctx.message.author)
 
             if response.content.lower().strip() in ['y', 'yes']:
                 self.c_commands[command] = text
@@ -57,6 +70,11 @@ class CustomGlobalCommands:
         command = command.lower()
         if command in self.c_commands:
             self.c_commands.pop(command)
+
+            for alias, acmd in self.aliases.copy():
+                if acmd == command:
+                    self.aliases.pop(alias)
+
             self.save()
             await self.bot.say("Global custom command successfully deleted.")
         else:
@@ -66,21 +84,110 @@ class CustomGlobalCommands:
     async def lsgcom(self, ctx):
         """Shows global custom commands list"""
         if self.c_commands:
-            i = 0
-            msg = ["```Custom commands:\n"]
-            for cmd in sorted(self.c_commands.keys()):
-                if len(msg[i]) + len(ctx.prefix) + len(cmd) + 5 > 2000:
-                    msg[i] += "```"
-                    i += 1
-                    msg.append("``` {}{}\n".format(ctx.prefix, cmd))
-                else:
-                    msg[i] += " {}{}\n".format(ctx.prefix, cmd)
-            msg[i] += "```"
-            for cmds in msg:
-                await self.bot.say(cmds)
+            cmd_aliases = {}
+            for k, v in self.aliases.items():
+                if v not in cmd_aliases:
+                    cmd_aliases[v] = set()
+                cmd_aliases[v].add(k)
+
+            sections = []
+            for command, text in sorted(self.c_commands.items()):
+                item = 'Name:    ' + command
+                aliases = cmd_aliases.get(command)
+                if aliases:
+                    item += '\nAliases: ' + ', '.join(sorted(aliases))
+                item += '\nText:    ' + text
+                sections.append(item)
+
+            for cmds in pagify('\n\n'.join(sections)):
+                await self.bot.say(box(cmds))
         else:
             await self.bot.say("There are no global custom commands defined. "
                                "Use setgcom [command] [text]")
+
+    @commands.group(pass_context=True, invoke_without_command=True)
+    @checks.is_owner()
+    async def agcom(self, ctx, command=None):
+        if ctx.invoked_subcommand is None:
+            if command:
+                await ctx.invoke(self.ls_aliases, command)
+            else:
+                await ctx.invoke(self.lsgcom)
+
+    @agcom.command(name='show')
+    @checks.is_owner()
+    async def ls_aliases(self, command):
+        "Shows aliases for a command, or the command bound to an alias"
+        base = self.aliases.get(command)
+        cmd = self.c_commands.get(base or command)
+        if base:
+            msg = "`%s` is an alias for `%s`" % (command, base)
+        elif cmd:
+            aliases = [k for k, v in self.aliases.items() if v == command]
+            aliases = ', '.join('`%s`' % x for x in aliases)
+            if aliases:
+                msg = "`%s` has the following aliases: %s." % (command, aliases)
+            else:
+                msg = "`%s` has no aliases."
+        else:
+            msg = "`%s` isn't a custom command or alias." % command
+
+        await self.bot.say(msg)
+
+    @agcom.command(name='add')
+    @checks.is_owner()
+    async def add_aliases(self, command, *aliases):
+        "Add one or more aliases for a custom command"
+        command = command.lower()
+        if command not in self.c_commands:
+            await self.bot.say("`%s` isn't a custom command.")
+            return
+
+        existing_a = []
+        existing_c = []
+        count = 0
+
+        for alias in aliases:
+            if alias in self.aliases:
+                existing_a.append(alias)
+            elif alias in self.bot.commands:
+                existing_c.append(alias)
+            else:
+                self.aliases[alias] = command
+                count += 1
+        self.save()
+
+        msg = "%s new aliases added." % (count if count else 'No')
+        if existing_a:
+            joined = ', '.join('`%s`' % x for x in existing_a)
+            msg += "\nThe following are already aliases: %s." % joined
+        if existing_c:
+            joined = ', '.join('`%s`' % x for x in existing_c)
+            msg += "\nThe following are already normal commands: %s." % joined
+
+        await self.bot.say(msg)
+
+    @agcom.command(name='rm')
+    @checks.is_owner()
+    async def rm_aliases(self, *aliases):
+        count = 0
+        skipped = []
+
+        for alias in aliases:
+            if alias in self.aliases:
+                del self.aliases[alias]
+                count += 1
+            else:
+                skipped.append(alias)
+
+        self.save()
+
+        msg = "%s aliases removed." % (count if count else 'No')
+        if skipped:
+            skipped = ', '.join('`%s`' % x for x in skipped)
+            msg += "\nThe following aliases could not be found: %s." % skipped
+
+        await self.bot.say(msg)
 
     async def on_message(self, message):
         server = message.server
@@ -91,6 +198,7 @@ class CustomGlobalCommands:
 
         cmd = msg[len(prefix):]
         cmd = cmd.lower()
+        cmd = self.aliases.get(cmd, cmd)
         if cmd in self.c_commands:
             ret = self.c_commands[cmd]
             ret = self.format_cc(ret, message)
@@ -147,7 +255,11 @@ def check_folders():
 def check_files():
     if not dataIO.is_valid_json(JSON):
         print("Creating empty %s" % JSON)
-        dataIO.save_json(JSON, {})
+        default = {'ALIASES': {},
+                   'COMMANDS': {},
+                   '_CGCOM_VERSION': 2
+                   }
+        dataIO.save_json(JSON, default)
 
 
 def setup(bot):
