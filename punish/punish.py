@@ -198,13 +198,24 @@ class Punish:
                 if not quiet:
                     msgobj = await self.bot.edit_message(msgobj, msgobj.content + 'configuring channels... ')
 
-                for c in server.channels:
-                    await self.on_channel_create(c, role)
+                for channel in server.channels:
+                    await self.setup_channel(channel, role)
 
                 if not quiet:
                     await self.bot.edit_message(msgobj, msgobj.content + 'done.')
 
         return role
+
+    async def setup_channel(self, channel, role):
+        perms = discord.PermissionOverwrite()
+
+        if channel.type == discord.ChannelType.text:
+            perms.send_messages = False
+            perms.send_tts_messages = False
+        elif channel.type == discord.ChannelType.voice:
+            perms.speak = False
+
+        await self.bot.edit_channel_permissions(channel, role, overwrite=perms)
 
     async def on_load(self):
         await self.bot.wait_until_ready()
@@ -355,24 +366,16 @@ class Punish:
 
     # Listeners
 
-    async def on_channel_create(self, c):
+    async def on_channel_create(self, channel):
         """Run when new channels are created and set up role permissions"""
-        if c.is_private:
+        if channel.is_private:
             return
 
-        role = await self.get_role(c.server)
+        role = await self.get_role(channel.server)
         if not role:
             return
 
-        perms = discord.PermissionOverwrite()
-
-        if c.type == discord.ChannelType.text:
-            perms.send_messages = False
-            perms.send_tts_messages = False
-        elif c.type == discord.ChannelType.voice:
-            perms.speak = False
-
-        await self.bot.edit_channel_permissions(c, role, overwrite=perms)
+        await self.setup_channel(channel, role)
 
     async def on_member_update(self, before, after):
         """Remove scheduled unpunish when manually removed"""
