@@ -109,7 +109,7 @@ class ActivityLogger(object):
         if ctx.invoked_subcommand is None:
             await self.bot.send_cmd_help(ctx)
 
-    @logset.command(name='everything')
+    @logset.command(name='everything', aliases=['global'])
     async def set_everything(self, on_off: bool = None):
         """Global override for all logging."""
         if on_off is not None:
@@ -317,7 +317,7 @@ class ActivityLogger(object):
         self.gethandle(fname, mode=mode).write(' '.join(entry) + '\n')
 
     async def message_handler(self, message, *args, force_attachments=False, **kwargs):
-        dl_attachment = self.should_download(message)
+        dl_attachment = bool(self.should_download(message))
         if force_attachments is not None:
             dl_attachment &= force_attachments
 
