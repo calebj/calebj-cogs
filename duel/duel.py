@@ -524,7 +524,6 @@ class Duel:
             self.bot.dispatch('duel_completion', channel=channel,
                                 players=(p1,p2), victor=victor)
         except:
-            self.underway.remove(channel.id)
             raise
         finally:
             self.underway.remove(channel.id)
