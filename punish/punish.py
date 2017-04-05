@@ -133,6 +133,9 @@ class Punish:
         disp_table = []
         now = time.time()
         for member_id, data in self.json[server_id].items():
+            if not member_id.isdigit():
+                continue
+
             member_name = getmname(member_id)
             punisher_name = getmname(data['by'])
             reason = data['reason']
@@ -165,7 +168,7 @@ class Punish:
     @checks.mod_or_permissions(manage_messages=True)
     async def unpunish(self, ctx, user: discord.Member):
         """Removes punishment from a user. Same as removing the role directly"""
-        role = discord.utils.get(user.server.roles, name=DEFAULT_ROLE_NAME)
+        role = self.get_role(user.server)
         sid = user.server.id
         if role and role in user.roles:
             reason = 'Punishment manually ended early by %s. ' % ctx.message.author
@@ -173,11 +176,20 @@ class Punish:
                 reason += self.json[sid][user.id]['reason']
             await self._unpunish(user, reason)
             await self.bot.say('Done.')
-        else:
+        elif role:
             await self.bot.say("That user wasn't punished.")
+        else:
+            await self.bot.say("The punish role couldn't be found in this server.")
 
     async def get_role(self, server, quiet=False, create=False):
-        role = discord.utils.get(server.roles, name=DEFAULT_ROLE_NAME)
+        default_name = DEFAULT_ROLE_NAME
+        role_id = self.json.get(server.id, {}).get('ROLE_ID')
+
+        if role_id:
+            role = discord.utils.get(server.roles, id=role_id)
+        else:
+            role = discord.utils.get(server.roles, name=default_name)
+
         if create and not role:
             perms = server.me.server_permissions
             if not perms.manage_roles and perms.manage_channels:
@@ -185,14 +197,14 @@ class Punish:
                 return None
 
             else:
-                msg = "The %s role doesn't exist; Creating it now..." % DEFAULT_ROLE_NAME
+                msg = "The %s role doesn't exist; Creating it now..." % default_name
 
                 if not quiet:
                     msgobj = await self.bot.reply(msg)
 
                 log.debug('Creating punish role in %s' % server.name)
                 perms = discord.Permissions.none()
-                role = await self.bot.create_role(server, name=DEFAULT_ROLE_NAME, permissions=perms)
+                role = await self.bot.create_role(server, name=default_name, permissions=perms)
                 await self.bot.move_role(server, role, server.me.top_role.position - 1)
 
                 if not quiet:
@@ -203,6 +215,12 @@ class Punish:
 
                 if not quiet:
                     await self.bot.edit_message(msgobj, msgobj.content + 'done.')
+
+        if role and role.id != role_id:
+            if server.id not in self.json:
+                self.json[server.id] = {}
+            self.json[server.id]['ROLE_ID'] = role.id
+            self.save()
 
         return role
 
@@ -223,7 +241,9 @@ class Punish:
         for serverid, members in self.json.copy().items():
             server = self.bot.get_server(serverid)
             me = server.me
-            if not server and members:
+
+            # Bot is no longer in the server
+            if not server:
                 del(self.json[serverid])
                 continue
 
@@ -234,6 +254,8 @@ class Punish:
                 continue
 
             for member_id, data in members.items():
+                if not member_id.isdigit():
+                    continue
 
                 until = data['until']
                 if until:
@@ -426,6 +448,9 @@ def compat_load(path):
     data = dataIO.load_json(path)
     for server, punishments in data.items():
         for user, pdata in punishments.items():
+            if not user.isdigit():
+                continue
+
             by = pdata.pop('givenby', None)  # able to read Kownlin json
             by = by if by else pdata.pop('by', None)
             pdata['by'] = by
