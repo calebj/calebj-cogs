@@ -234,7 +234,7 @@ class ActivityLogger(object):
 
             try:
                 if not os.path.exists(dirname):
-                    os.mkdir(dirname)
+                    os.makedirs(dirname)
                 handle = LogHandle(path, mode=mode)
             except:
                 raise
