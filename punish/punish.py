@@ -25,6 +25,7 @@ DEFAULT_TIMEOUT = '30m'
 PURGE_MESSAGES = 1  # for cpunish
 PATH = 'data/punish/'
 JSON = PATH + 'settings.json'
+DEFAULT_ROLE_NAME = 'Punished'
 
 
 class BadTimeExpr(Exception):
@@ -72,7 +73,6 @@ class Punish:
         self.bot = bot
         self.json = compat_load(JSON)
         self.handles = {}
-        self.role_name = 'Punished'
         bot.loop.create_task(self.on_load())
 
     def save(self):
@@ -165,7 +165,7 @@ class Punish:
     @checks.mod_or_permissions(manage_messages=True)
     async def unpunish(self, ctx, user: discord.Member):
         """Removes punishment from a user. Same as removing the role directly"""
-        role = discord.utils.get(user.server.roles, name=self.role_name)
+        role = discord.utils.get(user.server.roles, name=DEFAULT_ROLE_NAME)
         sid = user.server.id
         if role and role in user.roles:
             reason = 'Punishment manually ended early by %s. ' % ctx.message.author
@@ -177,7 +177,7 @@ class Punish:
             await self.bot.say("That user wasn't punished.")
 
     async def get_role(self, server, quiet=False, create=False):
-        role = discord.utils.get(server.roles, name=self.role_name)
+        role = discord.utils.get(server.roles, name=DEFAULT_ROLE_NAME)
         if create and not role:
             perms = server.me.server_permissions
             if not perms.manage_roles and perms.manage_channels:
@@ -185,14 +185,14 @@ class Punish:
                 return None
 
             else:
-                msg = "The %s role doesn't exist; Creating it now..." % self.role_name
+                msg = "The %s role doesn't exist; Creating it now..." % DEFAULT_ROLE_NAME
 
                 if not quiet:
                     msgobj = await self.bot.reply(msg)
 
                 log.debug('Creating punish role in %s' % server.name)
                 perms = discord.Permissions.none()
-                role = await self.bot.create_role(server, name=self.role_name, permissions=perms)
+                role = await self.bot.create_role(server, name=DEFAULT_ROLE_NAME, permissions=perms)
                 await self.bot.move_role(server, role, server.me.top_role.position - 1)
 
                 if not quiet:
@@ -412,7 +412,14 @@ class Punish:
                 self.schedule_unpunish(duration, member, reason)
 
     async def on_server_role_update(self, before, after):
-        pass
+        server = before.server
+        role = await self.get_role(server)
+        if before.id != role.id:
+            return
+        if after.position != (server.me.top_role.position - 1):
+            if after < server.me.top_role:
+                await self.bot.move_role(server, after,
+                                         server.me.top_role.position - 1)
 
 
 def compat_load(path):
@@ -442,5 +449,4 @@ def check_file():
 def setup(bot):
     check_folder()
     check_file()
-    n = Punish(bot)
-    bot.add_cog(n)
+    bot.add_cog(Punish(bot))
