@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from __main__ import send_cmd_help
 from cogs.utils import checks
 from cogs.utils.dataIO import dataIO
 from datetime import datetime
@@ -67,7 +66,7 @@ class ActivityLogger(object):
     async def logset(self, ctx):
         """Change activity logging settings"""
         if ctx.invoked_subcommand is None:
-            await send_cmd_help(ctx)
+            await self.bot.send_cmd_help(ctx)
 
     @logset.command(name='everything')
     async def set_everything(self, on_off: bool = None):

@@ -2,7 +2,6 @@ from discord.ext import commands
 from .utils.chat_formatting import box, pagify
 from .utils.dataIO import dataIO
 from .utils import checks
-from __main__ import user_allowed, send_cmd_help
 import os
 from copy import deepcopy
 
@@ -23,7 +22,7 @@ class GlobalAlias:
     async def galias(self, ctx):
         """Manage global aliases for commands"""
         if ctx.invoked_subcommand is None:
-            await send_cmd_help(ctx)
+            await self.bot.send_cmd_help(ctx)
 
     @galias.command(name="add", pass_context=True)
     @checks.is_owner()
@@ -107,7 +106,7 @@ class GlobalAlias:
             await self.bot.say(page)
 
     async def on_message(self, message):
-        if not user_allowed(message):
+        if not self.bot.user_allowed(message):
             return
 
         msg = message.content

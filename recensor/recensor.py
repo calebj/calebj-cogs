@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 import os
-from __main__ import settings, send_cmd_help
 import logging
 from cogs.utils.dataIO import dataIO
 from .utils import checks
@@ -87,7 +86,7 @@ class ReCensor:
     async def recensor(self, ctx):
         """Configure regular expression censorship"""
         if ctx.invoked_subcommand is None:
-            await send_cmd_help(ctx)
+            await self.bot.send_cmd_help(ctx)
 
     @recensor.command(pass_context=True, name='list')
     async def _list(self, ctx, channel: discord.Channel=None):
@@ -253,10 +252,10 @@ class ReCensor:
         """Tests message to see if it is exempt from filter. Taken from mod.py"""
         user = message.author
         server = message.server
-        admin_role = settings.get_server_admin(server)
-        mod_role = settings.get_server_mod(server)
+        admin_role = self.bot.settings.get_server_admin(server)
+        mod_role = self.bot.settings.get_server_mod(server)
 
-        if user.id == settings.owner:
+        if user.id == self.bot.settings.owner:
             return True
         elif discord.utils.get(user.roles, name=admin_role):
             return True

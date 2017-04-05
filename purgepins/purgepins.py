@@ -2,7 +2,6 @@ import discord
 from discord.ext import commands
 from .utils.dataIO import dataIO
 from .utils import checks
-from __main__ import send_cmd_help
 import re
 
 JSON = 'data/purgepins.json'
@@ -48,7 +47,7 @@ class PurgePins:
                 try:
                     wait = _parse_time(wait)
                 except ValueError:
-                    await send_cmd_help(ctx)
+                    await self.bot.send_cmd_help(ctx)
                     return
             self.settings[channel.id] = wait
 
