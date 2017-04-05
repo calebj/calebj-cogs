@@ -3,5 +3,7 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "DataDog",
     "SHORT" : "Sends various bot statistics to a running statsd instance.",
-    "DESCRIPTION" : ""
+    "DESCRIPTION" : "Sends various bot statistics to a running statsd instance.",
+    "TAGS" : ["datadog", "statsd", "statistics", "stats", "metrics", "utility"],
+    "REQUIREMENTS" : ["datadog"]
 }

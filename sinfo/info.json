@@ -3,5 +3,6 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "sinfo",
     "SHORT" : "Includes commands to show basic info.",
-    "DESCRIPTION" : ""
+    "DESCRIPTION" : "Includes commands to show basic info.",
+    "TAGS" : ["utility", "info"]
 }

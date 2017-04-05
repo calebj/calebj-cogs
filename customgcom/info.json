@@ -3,5 +3,6 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "Global custom commands.",
     "SHORT" : "Define global custom commands.",
-    "DESCRIPTION" : "Define global custom commands. Similar to customcom, but only the bot owner can modify commands. You can also add aliases."
+    "DESCRIPTION" : "Define global custom commands. Similar to customcom, but only the bot owner can modify commands. You can also add aliases.",
+    "TAGS" : ["customcom", "tags", "tag", "utility"]
 }

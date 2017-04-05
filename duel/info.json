@@ -3,5 +3,6 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "Duel",
     "SHORT" : "Makes two users duel each other, with randomized moves and score tracking.",
-    "DESCRIPTION" : ""
+    "DESCRIPTION" : "Makes two users duel each other, with randomized moves and score tracking.",
+    "TAGS" : ["duel", "fun", "fight", "combat"]
 }

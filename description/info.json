@@ -3,5 +3,6 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "Description",
     "SHORT" : "Set the bot description that shows in help",
-    "DESCRIPTION" : "Set the bot description, or run without an argument to restore the default."
+    "DESCRIPTION" : "Set the bot description, or run without an argument to restore the default.",
+    "TAGS" : ["description", "utility", "help"]
 }

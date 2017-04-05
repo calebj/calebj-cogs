@@ -3,5 +3,6 @@
     "INSTALL_MSG" : "Done.",
     "NAME" : "Global aliases",
     "SHORT" : "Define global command aliases.",
-    "DESCRIPTION" : "Define global command aliases. Similar to alias, but only the bot owner can modify aliases."
+    "DESCRIPTION" : "Define global command aliases. Similar to alias, but only the bot owner can modify aliases.",
+    "TAGS" : ["alias", "utility"]
 }
