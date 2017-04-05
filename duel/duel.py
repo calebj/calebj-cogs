@@ -283,7 +283,7 @@ class Duel:
 
     def __init__(self, bot):
         self.bot = bot
-        self.duelists = dataIO.load_json("data/duel/duelist.json")
+        self.duelists = dataIO.load_json(JSON_PATH)
 
     def _set_stats(self, user, stats):
         userid = user.member.id
@@ -369,12 +369,17 @@ class Duel:
             await self.bot.say("Currently the list is empty, add more people "
                                "with `%sprotect` first." % ctx.prefix)
 
-    @commands.command(name="duels", pass_context=True)
+    @commands.group(name="duels", pass_context=True, allow_dms=False)
+    async def _duels(self, ctx):
+        if ctx.invoked_subcommand is None:
+            await ctx.invoke(self._duels_list)
+
+    @_duels.command(name="list", pass_context=True)
     @commands.cooldown(2, 60, commands.BucketType.user)
-    async def _duels(self, ctx, top: int=10):
+    async def _duels_list(self, ctx, top: int=10):
         """Shows the duel leaderboard, defaults to top 10"""
         server = ctx.message.server
-        server_members = [m.id for m in server.members]
+        server_members = {m.id for m in server.members}
         if top < 1:
             top = 10
         if server.id in self.duelists:
@@ -393,6 +398,11 @@ class Duel:
             # filter out extra data, TODO: store protected list seperately
             duel_stats = filter(stat_filter, self.duelists[server.id].items())
             duels_sorted = sorted(duel_stats, key=sort_wins, reverse=True)
+
+            if not duels_sorted:
+                await self.bot.say('No records to show.')
+                return
+
             if len(duels_sorted) < top:
                 top = len(duels_sorted)
             topten = duels_sorted[:top]
@@ -424,6 +434,22 @@ class Duel:
                     await self.bot.say("The leaderboard is too big to be displayed. Try with a lower <top> parameter.")
         else:
             await self.bot.say("There are no scores registered in this server. Start fighting!")
+
+    @_duels.command(name="reset", pass_context=True)
+    @checks.admin()
+    async def _duels_reset(self, ctx):
+        keep_keys = {'protected'}
+        sid = ctx.message.server.id
+        data = self.duelists.get(sid, {})
+
+        if set(data.keys()) <= keep_keys:
+            await self.bot.say('Nothing to reset.')
+            return
+
+        keep_data = {k: data[k] for k in keep_keys}
+        self.duelists[sid] = keep_data
+        dataIO.save_json(JSON_PATH, self.duelists)
+        await self.bot.say('Duel records cleared.')
 
     @commands.command(name="duel", pass_context=True, no_pm=True)
     @commands.cooldown(2, 60, commands.BucketType.user)
@@ -588,5 +614,4 @@ def check_files():
 def setup(bot):
     check_folders()
     check_files()
-    n = Duel(bot)
-    bot.add_cog(n)
+    bot.add_cog(Duel(bot))
