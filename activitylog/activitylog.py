@@ -102,6 +102,15 @@ class ActivityLogger(object):
         await self.bot.edit_message(status_msg, 'Fetching logs... done.')
         await self.bot.say(msg)
 
+    @logfetch.command(pass_context=True, name='server', allow_dm=False)
+    async def fetch_server(self, ctx):
+        """Fetch complete logs for the current server.
+
+        Respects current logging settings such as attachments and channels.
+        Note that server events such as join/leave, ban etc can't be retrieved.
+        """
+        await self.bot.say('Not implemented yet. Sorry!')
+
     @commands.group(pass_context=True)
     @checks.is_owner()
     async def logset(self, ctx):
@@ -317,9 +326,9 @@ class ActivityLogger(object):
         self.gethandle(fname, mode=mode).write(' '.join(entry) + '\n')
 
     async def message_handler(self, message, *args, force_attachments=False, **kwargs):
-        dl_attachment = bool(self.should_download(message))
+        dl_attachment = self.should_download(message)
         if force_attachments is not None:
-            dl_attachment &= force_attachments
+            dl_attachment = force_attachments
 
         if message.attachments and dl_attachment:
             url, path, filename = self.process_attachment(message)
