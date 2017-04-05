@@ -63,6 +63,47 @@ class ActivityLogger(object):
 
     @commands.group(pass_context=True)
     @checks.is_owner()
+    async def logfetch(self, ctx):
+        """Fetches logs from channel or server. Beware the disk usage."""
+        if ctx.invoked_subcommand is None:
+            await self.bot.send_cmd_help(ctx)
+
+    @logfetch.command(pass_context=True, name='channel')
+    async def fetch_channel(self, ctx, subfolder: str, channel: discord.Channel = None, attachments: bool = None):
+        "Fetch complete logs for a channel. Defaults to the current one."
+        msg_base = 'Fetching logs... %i messages retrieved so far'
+        count = 0
+        fetch_begin = channel.created_at
+        start = datetime.now()
+        keep_fetching = True
+
+        status_msg = await self.bot.say(msg_base % count)
+
+        while keep_fetching:
+            last_count = count
+            async for message in self.bot.logs_from(channel, after=fetch_begin, reverse=True):
+                await self.message_handler(message, force=True, subfolder=subfolder,
+                                           force_attachments=attachments)
+
+                fetch_begin = message
+                count += 1
+
+            if count == last_count:
+                break
+
+            await self.bot.edit_message(status_msg, msg_base % count)
+
+        elapsed = datetime.now() - start
+
+        msg = 'Fetched %i messages' % count
+        if self.settings.get('attachments', attachments):
+            msg += ' (including attachments)'
+        msg += ' in %s.' % elapsed
+        await self.bot.edit_message(status_msg, 'Fetching logs... done.')
+        await self.bot.say(msg)
+
+    @commands.group(pass_context=True)
+    @checks.is_owner()
     async def logset(self, ctx):
         """Change activity logging settings"""
         if ctx.invoked_subcommand is None:
@@ -246,10 +287,10 @@ class ActivityLogger(object):
 
         return url, path, filename
 
-    def log(self, location, text, timestamp=None):
+    def log(self, location, text, timestamp=None, force=False, subfolder=None, mode='a'):
         if not timestamp:
             timestamp = datetime.utcnow()
-        if self.lock or not self.should_log(location):
+        if self.lock or not (force or self.should_log(location)):
             return
 
         path = PATH_LIST.copy()
@@ -266,27 +307,40 @@ class ActivityLogger(object):
         else:
             return
 
+        if subfolder:
+            path.insert(-1, str(subfolder))
+
         text = text.replace('\n', '\\n')
         entry.append(text)
 
         fname = os.path.join(*path)
-        self.gethandle(fname).write(' '.join(entry) + '\n')
+        self.gethandle(fname, mode=mode).write(' '.join(entry) + '\n')
 
-    async def on_message(self, message):
-        dl_attachment = message.attachments and self.should_download(message)
-        if dl_attachment:
+    async def message_handler(self, message, *args, force_attachments=False, **kwargs):
+        dl_attachment = self.should_download(message)
+        if force_attachments is not None:
+            dl_attachment &= force_attachments
+
+        if message.attachments and dl_attachment:
             url, path, filename = self.process_attachment(message)
             entry = ATTACHMENT_TEMPLATE.format(message, filename)
         else:
             entry = MESSAGE_TEMPLATE.format(message)
-        self.log(message.channel, entry, message.timestamp)
-        if dl_attachment:
+
+        self.log(message.channel, entry, message.timestamp, *args, **kwargs)
+
+        if message.attachments and dl_attachment:
             dl_path = os.path.join(path, filename)
             if not os.path.exists(path):
                 os.mkdir(path)
-            async with self.session.get(url) as r:
-                with open(dl_path, 'wb') as f:
-                    f.write(await r.read())
+
+            if not os.path.exists(dl_path):  # don't redownload
+                async with self.session.get(url) as r:
+                    with open(dl_path, 'wb') as f:
+                        f.write(await r.read())
+
+    async def on_message(self, message):
+        await self.message_handler(message)
 
     async def on_message_edit(self, before, after):
         timestamp = before.timestamp.strftime(TIMESTAMP_FORMAT)
