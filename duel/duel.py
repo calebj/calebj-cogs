@@ -284,6 +284,7 @@ class Duel:
     def __init__(self, bot):
         self.bot = bot
         self.duelists = dataIO.load_json(JSON_PATH)
+        self.underway = set()
 
     def _set_stats(self, user, stats):
         userid = user.member.id
@@ -453,30 +454,35 @@ class Duel:
 
     @commands.command(name="duel", pass_context=True, no_pm=True)
     @commands.cooldown(2, 60, commands.BucketType.user)
-    async def _duel(self, ctx, user: discord.Member=None):
+    async def _duel(self, ctx, user: discord.Member):
         """Duel another player"""
-        if not user:
-            await self.bot.reply("please mention a user to duel with!")
-        else:
-            author = ctx.message.author
-            server = ctx.message.server
-            channel = ctx.message.channel
-            duelists = self.duelists.get(server.id, {})
-            p1 = Player(self, author)
-            p2 = Player(self, user)
+        author = ctx.message.author
+        server = ctx.message.server
+        channel = ctx.message.channel
 
-            if user == author:
-                await self.bot.reply("you can't duel yourself, silly!")
-                return
-            elif user.id in duelists.get('protected', []):
-                await self.bot.reply("%s is on the protected users list."
-                                     % user.display_name)
-                return
-            elif author.id in duelists.get('protected', []):
-                await self.bot.reply("you can't duel anyone while you're on "
-                                     " the protected users list.")
-                return
+        if channel.id in self.underway:
+            await self.bot.say("There's already a duel underway in this channel!")
+            return
 
+        duelists = self.duelists.get(server.id, {})
+        p1 = Player(self, author)
+        p2 = Player(self, user)
+
+        if user == author:
+            await self.bot.reply("you can't duel yourself, silly!")
+            return
+        elif user.id in duelists.get('protected', []):
+            await self.bot.reply("%s is on the protected users list."
+                                    % user.display_name)
+            return
+        elif author.id in duelists.get('protected', []):
+            await self.bot.reply("you can't duel anyone while you're on "
+                                    " the protected users list.")
+            return
+
+        self.underway.add(channel.id)
+
+        try:
             self.bot.dispatch('duel', channel=channel, players=(p1, p2))
 
             order = [(p1, p2), (p2, p1)]
@@ -502,21 +508,26 @@ class Duel:
                 loser = p1 if p1.hp < p2.hp else p2
                 victor.wins += 1
                 loser.losses += 1
-                msg = 'After %d rounds, %s wins with %d HP!' % (
-                    i + 1, victor.mention, victor.hp)
+                msg = 'After {0} rounds, {1.mention} wins with ' \
+                    '{1.hp} HP!'.format(i + 1, victor)
                 msg += '\nStats: '
-                for p, delim in [(victor, '; '), (loser, '.')]:
-                    msg += '%s has %d wins, %d losses, %d draws%s' % (p, p.wins, p.losses, p.draws, delim)
+                for p, end in ((victor, '; '), (loser, '.')):
+                    msg += '{0} has {0.wins} wins, {0.losses} losses, ' \
+                        '{0.draws} draws{1}'.format(p, end)
             else:
                 victor=None
                 for p in [p1, p2]:
                     p.draws += 1
                 msg = 'After %d rounds, the duel ends in a tie!' % (i + 1)
 
-            # append stats
             await self.bot.say(msg)
             self.bot.dispatch('duel_completion', channel=channel,
-                              players=(p1,p2), victor=victor)
+                                players=(p1,p2), victor=victor)
+        except:
+            self.underway.remove(channel.id)
+            raise
+        finally:
+            self.underway.remove(channel.id)
 
     def generate_action(self, attacker, defender, move_cat=None):
         # Select move category
