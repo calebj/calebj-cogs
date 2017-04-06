@@ -439,7 +439,7 @@ class Duel:
     @_duels.command(name="reset", pass_context=True)
     @checks.admin()
     async def _duels_reset(self, ctx):
-        keep_keys = {'protected'}
+        keep_keys = {'protected', 'edit_posts'}
         sid = ctx.message.server.id
         data = self.duelists.get(sid, {})
 
@@ -451,6 +451,26 @@ class Duel:
         self.duelists[sid] = keep_data
         dataIO.save_json(JSON_PATH, self.duelists)
         await self.bot.say('Duel records cleared.')
+
+    @_duels.command(name="editmode", pass_context=True)
+    @checks.admin()
+    async def _duels_postmode(self, ctx, on_off: bool = None):
+        sid = ctx.message.server.id
+        current = self.duelists[sid].get('edit_posts', False)
+
+        if on_off is None:
+            adj = 'enabled' if current else 'disabled'
+            await self.bot.say('In-place editing is currently %s.' % adj)
+            return
+
+        adj = 'enabled' if on_off else 'disabled'
+        if on_off == current:
+            await self.bot.say('In-place editing already %s.' % adj)
+        else:
+            self.duelists[sid]['edit_posts'] = on_off
+            await self.bot.say('In-place editing %s.' % adj)
+
+        dataIO.save_json(JSON_PATH, self.duelists)
 
     @commands.command(name="duel", pass_context=True, no_pm=True)
     @commands.cooldown(2, 60, commands.BucketType.user)
@@ -487,20 +507,31 @@ class Duel:
 
             order = [(p1, p2), (p2, p1)]
             random.shuffle(order)
-            msg = "%s challenges %s to a duel!" % (p1, p2)
-            msg += "\nBy a coin toss, %s will go first." % order[0][0]
-            await self.bot.say(msg)
+            msg = ["%s challenges %s to a duel!" % (p1, p2)]
+            msg.append("\nBy a coin toss, %s will go first." % order[0][0])
+            msg_object = await self.bot.say('\n'.join(msg))
             for i in range(MAX_ROUNDS):
                 if p1.hp <= 0 or p2.hp <= 0:
                     break
                 for attacker, defender in order:
                     if p1.hp <= 0 or p2.hp <= 0:
                         break
+
                     if attacker.member == ctx.message.server.me:
-                        msg = self.generate_action(attacker, defender, 'BOT')
+                        move_msg = self.generate_action(attacker, defender, 'BOT')
                     else:
-                        msg = self.generate_action(attacker, defender)
-                    await self.bot.say(msg)
+                        move_msg = self.generate_action(attacker, defender)
+
+                    if self.duelists[server.id].get('edit_posts', False):
+                        new_msg = '\n'.join(msg + [move_msg])
+                        if len(new_msg) < 2000:
+                            await self._robust_edit(msg_object, content=new_msg)
+                            msg = msg + [move_msg]
+                            await asyncio.sleep(1)
+                            continue
+
+                    msg_object = await self.bot.say(move_msg)
+                    msg = [move_msg]
                     await asyncio.sleep(1)
 
             if p1.hp != p2.hp:
@@ -568,6 +599,14 @@ class Duel:
             verb += ' ' + movelist.pop()  # Optional but present when obj is
         return move, obj, verb, hp_delta
 
+    async def _robust_edit(self, msg, content=None, embed=None):
+        try:
+            msg = await self.bot.edit_message(msg, new_content=content, embed=embed)
+        except discord.errors.NotFound:
+            msg = await self.bot.send_message(msg.channel, content=content, embed=embed)
+        except:
+            raise
+        return msg
 
 def weighted_choice(choices):
     total = sum(w for c, w in choices.items())
