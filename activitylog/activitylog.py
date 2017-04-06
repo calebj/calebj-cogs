@@ -2,14 +2,18 @@ import discord
 from discord.ext import commands
 from cogs.utils import checks
 from cogs.utils.dataIO import dataIO
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import asyncio
 import aiohttp
+from functools import partial
+from enum import Enum
 
 TIMESTAMP_FORMAT = '%Y-%m-%d %X'  # YYYY-MM-DD HH:MM:SS
 PATH_LIST = ['data', 'activitylogger']
 PATH = os.path.join(*PATH_LIST)
 JSON = os.path.join(*PATH_LIST, "settings.json")
+EDIT_TIMEDELTA = timedelta(seconds=3)
 
 # 0 is Message object
 AUTHOR_TEMPLATE = "@{0.author.name}#{0.author.discriminator}"
@@ -26,6 +30,24 @@ EDIT_TEMPLATE = (AUTHOR_TEMPLATE + " edited message from {2} "
 # 0 is deleted message, 1 is formatted timestamp
 DELETE_TEMPLATE = (AUTHOR_TEMPLATE + " deleted message from {1} "
                    "({0.clean_content})")
+
+
+class FetchCookie(object):
+    def __init__(self, ctx, start, status_msg, last_edit=None):
+        self.ctx = ctx
+        self.start = start
+        self.status_msg = status_msg
+        self.last_edit = last_edit
+        self.total_messages = 0
+        self.completed_messages = []
+
+
+class FetchStatus(Enum):
+    STARTING = 'starting'
+    FETCHING = 'fetching'
+    CANCELLED = 'cancelled'
+    EXCEPTION = 'exception'
+    COMPLETED = 'completed'
 
 
 class LogHandle:
@@ -54,6 +76,7 @@ class ActivityLogger(object):
         self.handles = {}
         self.lock = False
         self.session = aiohttp.ClientSession(loop=self.bot.loop)
+        self.fetch_handle = None
 
     def __unload(self):
         self.lock = True
@@ -61,55 +84,181 @@ class ActivityLogger(object):
         for h in self.handles.values():
             h.close()
 
+        if isinstance(self.fetch_handle, asyncio.Future):
+            if not self.fetch_handle.cancelled():
+                self.fetch_handle.cancel()
+
+    async def _robust_edit(self, msg, content=None, embed=None):
+        try:
+            msg = await self.bot.edit_message(msg, new_content=content, embed=embed)
+        except discord.errors.NotFound:
+            msg = await self.bot.send_message(msg.channel, content=content, embed=embed)
+        except:
+            raise
+        return msg
+
+    async def cookie_edit_task(self, cookie, **kwargs):
+        cookie.status_msg = await self._robust_edit(cookie.status_msg, **kwargs)
+
+    async def fetch_task(self, channels, subfolder, attachments=None, status_cb=None):
+        channel = None
+        completed_channels = []
+        pending_channels = channels.copy()
+
+        def update(count, last_msg, status, channel, exception=None):
+            if not callable(status_cb):
+                return
+            elif type(last_msg) is not discord.Message:
+                last_msg = None
+
+            status_cb(count=count, channel=channel, subfolder=subfolder,
+                      status=status, exception=exception, last_msg=last_msg,
+                      completed_channels=completed_channels,
+                      pending_channels=pending_channels)
+
+        try:
+            for channel in channels:
+                pending_channels.remove(channel)
+                count = 0
+                fetch_begin = channel.created_at
+
+                update(count, None, FetchStatus.STARTING, channel)
+
+                while True:
+                    last_count = count
+                    async for message in self.bot.logs_from(channel,
+                                                            after=fetch_begin,
+                                                            reverse=True):
+
+                        await self.message_handler(message, force=True,
+                                                   subfolder=subfolder,
+                                                   force_attachments=attachments)
+
+                        fetch_begin = message
+                        update(count, fetch_begin, FetchStatus.FETCHING, channel)
+                        count += 1
+
+                    if count == last_count:
+                        break
+
+                update(count, fetch_begin, FetchStatus.COMPLETED, channel)
+                completed_channels.append(channel)
+
+        except asyncio.CancelledError:
+            update(count, fetch_begin, FetchStatus.CANCELLED, channel)
+        except Exception as e:
+            update(count, fetch_begin, FetchStatus.EXCEPTION, channel, exception=e)
+            raise
+
+    def format_fetch_line(self, cookie, count, status, exception, channel, **kwargs):
+        elapsed = datetime.now() - (cookie.last_edit or cookie.start)
+        edit_to = None
+        base = '#%s: ' % channel.name
+
+        if status is FetchStatus.STARTING:
+            edit_to = base + 'initializing...'
+        elif status is FetchStatus.EXCEPTION:
+            edit_to = base + 'error after %i messages.' % count
+            if isinstance(exception, Exception):
+                ename = type(exception).__name__
+                estr = str(exception)
+                edit_to += ': %s: %s' % (ename, estr)
+        elif status is FetchStatus.CANCELLED:
+            edit_to = base + 'cancelled after %i messages.' % count
+        elif status is FetchStatus.COMPLETED:
+            edit_to = base + 'fetched %i messages.' % count
+        elif status is FetchStatus.FETCHING:
+            if elapsed > EDIT_TIMEDELTA:
+                edit_to = base + '%i messages retrieved so far...' % count
+
+        return edit_to
+
+    def fetch_callback(self, cookie, pending_channels, **kwargs):
+        status = kwargs.get('status')
+        count = kwargs.get('count')
+
+        format_line = self.format_fetch_line(cookie, **kwargs)
+        if format_line:
+            rows = cookie.completed_messages + [format_line]
+            rows.extend([('#%s: pending' % c.name) for c in pending_channels])
+            cookie.last_edit = datetime.now()
+            task = self.cookie_edit_task(cookie, content='\n'.join(rows))
+            self.bot.loop.create_task(task)
+
+        if status is FetchStatus.COMPLETED:
+            cookie.total_messages += count
+            cookie.completed_messages.append(format_line)
+
+            if not pending_channels:
+                dest = cookie.ctx.message.channel
+                elapsed = datetime.now() - cookie.start
+                msg = ('Fetched a total of %i messages in %s.'
+                    % (cookie.total_messages, elapsed))
+                self.bot.loop.create_task(self.bot.send_message(dest, msg))
+
     @commands.group(pass_context=True)
     @checks.is_owner()
     async def logfetch(self, ctx):
-        """Fetches logs from channel or server. Beware the disk usage."""
+        "Fetches logs from channel or server. Beware the disk usage."
         if ctx.invoked_subcommand is None:
             await self.bot.send_cmd_help(ctx)
+
+    @logfetch.command(pass_context=True, name='cancel')
+    async def fetch_cancel(self, ctx):
+        "Cancels a running fetch operation."
+        if isinstance(self.fetch_handle, asyncio.Future):
+            if not self.fetch_handle.cancelled():
+                self.fetch_handle.cancel()
+                self.fetch_handle = None
+                await self.bot.say('Fetch cancelled.')
+                return
+
+        await self.bot.say('Nothing to cancel.')
 
     @logfetch.command(pass_context=True, name='channel')
     async def fetch_channel(self, ctx, subfolder: str, channel: discord.Channel = None, attachments: bool = None):
         "Fetch complete logs for a channel. Defaults to the current one."
-        msg_base = 'Fetching logs... %i messages retrieved so far'
-        count = 0
-        fetch_begin = channel.created_at
+
+        msg = await self.bot.say('Dispatching fetch task...')
         start = datetime.now()
-        keep_fetching = True
 
-        status_msg = await self.bot.say(msg_base % count)
+        cookie = FetchCookie(ctx, start, msg)
 
-        while keep_fetching:
-            last_count = count
-            async for message in self.bot.logs_from(channel, after=fetch_begin, reverse=True):
-                await self.message_handler(message, force=True, subfolder=subfolder,
-                                           force_attachments=attachments)
+        if channel is None:
+            channel = ctx.message.channel
 
-                fetch_begin = message
-                count += 1
+        callback = partial(self.fetch_callback, cookie)
+        task = self.fetch_task([channel], subfolder, attachments=attachments,
+                               status_cb=callback)
 
-            if count == last_count:
-                break
-
-            await self.bot.edit_message(status_msg, msg_base % count)
-
-        elapsed = datetime.now() - start
-
-        msg = 'Fetched %i messages' % count
-        if self.settings.get('attachments', attachments):
-            msg += ' (including attachments)'
-        msg += ' in %s.' % elapsed
-        await self.bot.edit_message(status_msg, 'Fetching logs... done.')
-        await self.bot.say(msg)
+        self.fetch_handle = self.bot.loop.create_task(task)
 
     @logfetch.command(pass_context=True, name='server', allow_dm=False)
-    async def fetch_server(self, ctx):
+    async def fetch_server(self, ctx, subfolder: str, attachments: bool = None):
         """Fetch complete logs for the current server.
 
         Respects current logging settings such as attachments and channels.
         Note that server events such as join/leave, ban etc can't be retrieved.
         """
-        await self.bot.say('Not implemented yet. Sorry!')
+        server = ctx.message.server
+
+        def check(channel):
+            if channel.type is not discord.ChannelType.text:
+                return False
+            return channel.permissions_for(server.me).read_message_history
+
+        channels = [c for c in server.channels if check(c)]
+
+        msg = await self.bot.say('Dispatching fetch task...')
+        start = datetime.now()
+
+        cookie = FetchCookie(ctx, start, msg)
+
+        callback = partial(self.fetch_callback, cookie)
+        task = self.fetch_task(channels, subfolder, attachments=attachments,
+                               status_cb=callback)
+
+        self.fetch_handle = self.bot.loop.create_task(task)
 
     @commands.group(pass_context=True)
     @checks.is_owner()
@@ -356,8 +505,10 @@ class ActivityLogger(object):
 
             if not os.path.exists(dl_path):  # don't redownload
                 async with self.session.get(url) as r:
-                    with open(dl_path, 'wb') as f:
+                    tmpname = dl_path + '.tmp'
+                    with open(tmpname, 'wb') as f:
                         f.write(await r.read())
+                    os.rename(tmpname, dl_path)
 
     async def on_message(self, message):
         await self.message_handler(message)
