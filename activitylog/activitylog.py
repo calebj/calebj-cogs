@@ -193,7 +193,7 @@ class ActivityLogger(object):
                 dest = cookie.ctx.message.channel
                 elapsed = datetime.now() - cookie.start
                 msg = ('Fetched a total of %i messages in %s.'
-                    % (cookie.total_messages, elapsed))
+                       % (cookie.total_messages, elapsed))
                 self.bot.loop.create_task(self.bot.send_message(dest, msg))
 
     @commands.group(pass_context=True)
@@ -500,15 +500,15 @@ class ActivityLogger(object):
 
         if message.attachments and dl_attachment:
             dl_path = os.path.join(path, filename)
+            tmp_path = os.path.join(path, aid + '.tmp')
             if not os.path.exists(path):
                 os.mkdir(path)
 
             if not os.path.exists(dl_path):  # don't redownload
                 async with self.session.get(url) as r:
-                    tmpname = aid + '.tmp'
-                    with open(tmpname, 'wb') as f:
+                    with open(tmp_path, 'wb') as f:
                         f.write(await r.read())
-                    os.rename(tmpname, dl_path)
+                    os.rename(tmp_path, dl_path)
 
     async def on_message(self, message):
         await self.message_handler(message)
