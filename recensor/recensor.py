@@ -266,9 +266,8 @@ class ReCensor:
 
     async def on_message(self, message):
         # Fast checks
-        if message.channel.is_private:
-            return
-        if message.author.id == self.bot.user.id:
+        if message.channel.is_private or self.bot.user == message.author \
+         or not isinstance(message.author, discord.Member):
             return
 
         server = message.server
