@@ -452,7 +452,7 @@ class ActivityLogger(object):
         else:
             truncated = False
 
-        return url, path, filename, truncated
+        return aid, url, path, filename, truncated
 
     def log(self, location, text, timestamp=None, force=False, subfolder=None, mode='a'):
         if not timestamp:
@@ -489,9 +489,9 @@ class ActivityLogger(object):
             dl_attachment = force_attachments
 
         if message.attachments and dl_attachment:
-            url, path, filename, truncated = self.process_attachment(message)
+            aid, url, path, filename, trunc = self.process_attachment(message)
             entry = ATTACHMENT_TEMPLATE.format(message, filename)
-            if truncated:
+            if trunc:
                 entry += ' (filename truncated)'
         else:
             entry = MESSAGE_TEMPLATE.format(message)
@@ -505,7 +505,7 @@ class ActivityLogger(object):
 
             if not os.path.exists(dl_path):  # don't redownload
                 async with self.session.get(url) as r:
-                    tmpname = dl_path + '.tmp'
+                    tmpname = aid + '.tmp'
                     with open(tmpname, 'wb') as f:
                         f.write(await r.read())
                     os.rename(tmpname, dl_path)
