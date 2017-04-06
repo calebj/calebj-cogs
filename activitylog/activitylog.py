@@ -294,7 +294,16 @@ class ActivityLogger(object):
         path = os.path.join(*path)
         filename = aid + '_' + aname
 
-        return url, path, filename
+        if len(filename) > 255:
+            target_len = 255 - len(aid) - 4
+            part_a = target_len // 2
+            part_b = target_len - part_a
+            filename = aid + '_' + aname[:part_a] + '...' + aname[-part_b:]
+            truncated = True
+        else:
+            truncated = False
+
+        return url, path, filename, truncated
 
     def log(self, location, text, timestamp=None, force=False, subfolder=None, mode='a'):
         if not timestamp:
@@ -331,8 +340,10 @@ class ActivityLogger(object):
             dl_attachment = force_attachments
 
         if message.attachments and dl_attachment:
-            url, path, filename = self.process_attachment(message)
+            url, path, filename, truncated = self.process_attachment(message)
             entry = ATTACHMENT_TEMPLATE.format(message, filename)
+            if truncated:
+                entry += ' (filename truncated)'
         else:
             entry = MESSAGE_TEMPLATE.format(message)
 
