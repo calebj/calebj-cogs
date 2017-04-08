@@ -289,6 +289,23 @@ class Punish:
             await self.bot.say('Permission denied.')
             return
 
+        if duration and duration.lower() in ['forever', 'inf', 'infinite']:
+            duration = None
+            timestamp = None
+        else:
+            if not duration:
+                msg += ' Using default duration of ' + DEFAULT_TIMEOUT
+                duration = DEFAULT_TIMEOUT
+
+            try:
+                duration = _parse_time(duration)
+                if duration < 1:
+                    await self.bot.say("Duration must be 1 second or longer.")
+                    return False
+            except BadTimeExpr as e:
+                await self.bot.say("Error parsing duration: %s." % e.args)
+                return False
+
         role = await self.get_role(server, quiet=quiet, create=True)
         if role is None:
             return
@@ -306,20 +323,6 @@ class Punish:
             msg = 'User was punished but had no timer, adding it now...'
         else:
             msg = 'Done.'
-
-        if duration and duration.lower() in ['forever', 'inf', 'infinite']:
-            duration = None
-            timestamp = None
-        else:
-            if not duration:
-                msg += ' Using default duration of ' + DEFAULT_TIMEOUT
-                duration = DEFAULT_TIMEOUT
-
-            try:
-                duration = _parse_time(duration)
-            except BadTimeExpr as e:
-                await self.bot.say("Error parsing duration: %s." % e.args)
-                return False
 
             timestamp = time.time() + duration
 
