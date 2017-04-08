@@ -439,6 +439,7 @@ class Duel:
     @_duels.command(name="reset", pass_context=True)
     @checks.admin()
     async def _duels_reset(self, ctx):
+        "Clears duel scores without resetting protection or editmode."
         keep_keys = {'protected', 'edit_posts'}
         sid = ctx.message.server.id
         data = self.duelists.get(sid, {})
@@ -455,8 +456,9 @@ class Duel:
     @_duels.command(name="editmode", pass_context=True)
     @checks.admin()
     async def _duels_postmode(self, ctx, on_off: bool = None):
+        "Edits messages in-place instead of posting each move seperately."
         sid = ctx.message.server.id
-        current = self.duelists[sid].get('edit_posts', False)
+        current = self.duelists.get(sid, {}).get('edit_posts', False)
 
         if on_off is None:
             adj = 'enabled' if current else 'disabled'
@@ -467,6 +469,8 @@ class Duel:
         if on_off == current:
             await self.bot.say('In-place editing already %s.' % adj)
         else:
+            if sid not in self.duelists:
+                self.duelists[sid] = {}
             self.duelists[sid]['edit_posts'] = on_off
             await self.bot.say('In-place editing %s.' % adj)
 
@@ -522,7 +526,7 @@ class Duel:
                     else:
                         move_msg = self.generate_action(attacker, defender)
 
-                    if self.duelists[server.id].get('edit_posts', False):
+                    if duelists.get('edit_posts', False):
                         new_msg = '\n'.join(msg + [move_msg])
                         if len(new_msg) < 2000:
                             await self._robust_edit(msg_object, content=new_msg)
