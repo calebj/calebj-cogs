@@ -483,27 +483,30 @@ class Duel:
         author = ctx.message.author
         server = ctx.message.server
         channel = ctx.message.channel
+        duelists = self.duelists.get(server.id, {})
+
+        abort = True
 
         if channel.id in self.underway:
             await self.bot.say("There's already a duel underway in this channel!")
-            return
-
-        duelists = self.duelists.get(server.id, {})
-        p1 = Player(self, author)
-        p2 = Player(self, user)
-
-        if user == author:
+        elif user == author:
             await self.bot.reply("you can't duel yourself, silly!")
-            return
         elif user.id in duelists.get('protected', []):
             await self.bot.reply("%s is on the protected users list."
                                     % user.display_name)
-            return
         elif author.id in duelists.get('protected', []):
             await self.bot.reply("you can't duel anyone while you're on "
                                     " the protected users list.")
+        else:
+            abort = False
+
+        if abort:
+            bucket = ctx.command._buckets.get_bucket(ctx)
+            bucket._tokens += 1  # Sorry, Danny
             return
 
+        p1 = Player(self, author)
+        p2 = Player(self, user)
         self.underway.add(channel.id)
 
         try:
