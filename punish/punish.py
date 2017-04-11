@@ -168,7 +168,7 @@ class Punish:
     @checks.mod_or_permissions(manage_messages=True)
     async def unpunish(self, ctx, user: discord.Member):
         """Removes punishment from a user. Same as removing the role directly"""
-        role = self.get_role(user.server)
+        role = await self.get_role(user.server)
         sid = user.server.id
         if role and role in user.roles:
             reason = 'Punishment manually ended early by %s. ' % ctx.message.author
