@@ -37,9 +37,9 @@ class ServerQuotes:
 
         if isinstance(author, discord.User):
             uid = author.id
-            quotes = [(i,q) for i,q in enumerate(self.quotes[sid]) if q['author_id'] == uid]
+            quotes = [(i, q) for i, q in enumerate(self.quotes[sid]) if q['author_id'] == uid]
         else:
-            quotes = [(i,q) for i,q in enumerate(self.quotes[sid]) if q['author_name'] == author]
+            quotes = [(i, q) for i, q in enumerate(self.quotes[sid]) if q['author_name'] == author]
 
         if len(quotes) == 0:
             raise commands.BadArgument("There are no quotes by %s." % author)
@@ -72,7 +72,7 @@ class ServerQuotes:
         if quote['author_id']:
             name = self._get_name_by_id(ctx, quote['author_id'])
             if quote['author_name'] and not name:
-                name = quote['author_name'] 
+                name = quote['author_name']
                 name += " (non-present user ID#%s)" % (quote['author_id'])
             return name
         elif quote['author_name']:
@@ -123,7 +123,7 @@ class ServerQuotes:
            Example: !delquote 3"""
         sid = ctx.message.server.id
         if num > 0 and num <= len(self.quotes[sid]):
-            del self.quotes[sid][num-1]
+            del self.quotes[sid][num - 1]
             await self.bot.say("Quote #%i deleted." % num)
             dataIO.save_json(JSON, self.quotes)
         else:
@@ -133,10 +133,13 @@ class ServerQuotes:
     async def lsquotes(self, ctx):
         """Displays a list of all quotes"""
         sid = ctx.message.server.id
-        if sid not in self.quotes:
-            raise commands.UserInputError("There are no quotes in this server!")
+        quotes = self.quotes.get(sid, [])
+        if not quotes:
+            await self.bot.say("There are no quotes in this server!")
+            return
+        else:
+            msg = await self.bot.say("Sending you the list via DM.")
 
-        quotes = self.quotes[sid]
         header = ['#', 'Author', 'Added by', 'Quote']
         table = []
         for i, q in enumerate(quotes):
@@ -148,8 +151,12 @@ class ServerQuotes:
                 name = "(non-present user ID#%s)" % q['added_by']
             table.append((i + 1, self._quote_author(ctx, q), name, text))
         tabulated = tabulate(table, header)
-        for page in pagify(tabulated, ['\n']):
-            await self.bot.say('```\n%s\n```' % page)
+        try:
+            for page in pagify(tabulated, ['\n']):
+                await self.bot.whisper('```\n%s\n```' % page)
+        except discord.errors.HTTPException:
+            err = "I can't send the list unless you allow DMs from server members."
+            await self.bot.edit_message(msg, new_content=err)
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
