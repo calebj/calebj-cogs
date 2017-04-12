@@ -12,6 +12,7 @@ import math
 import asyncio
 from .utils.chat_formatting import pagify
 from .utils import checks
+from functools import partial
 
 # Constants
 MAX_ROUNDS = 4
@@ -33,6 +34,7 @@ def indicatize(d):
             k += 's'
         result[k] = v
     return result
+
 
 # TEMPLATES BEGIN
 # {a} is attacker, {d} is defender/target, {o} is a randomly selected object,
@@ -89,7 +91,7 @@ FAMILIAR = {
     },
     'constrict': {
         'their thick anaconda': 4,
-        }
+    }
 }
 
 SUMMON = {
@@ -310,6 +312,13 @@ class Duel:
     def get_all_players(self, server: discord.Server):
         return [self.get_player(m) for m in server.members]
 
+    def format_display(self, server, mid):
+        member = server.get_member(mid)
+        if isinstance(member, discord.Member):
+            return member.display_name
+        elif member is None:
+            return 'missingno#%s' % mid
+
     @checks.mod_or_permissions(administrator=True)
     @commands.command(name="protect", pass_context=True)
     async def _protect(self, ctx, user: discord.Member=None):
@@ -359,9 +368,9 @@ class Duel:
         server = ctx.message.server
         duelists = self.duelists.get(server.id, {})
         member_list = duelists.get("protected", [])
+        fmt = partial(self.format_display, server)
         if member_list:
-            member_list = map(server.get_member, member_list)
-            name_list = map(lambda m: m.display_name, member_list)
+            name_list = map(fmt, member_list)
             name_list = ["**Protected users:**"] + sorted(name_list)
             delim = '\n'
             for page in pagify(delim.join(name_list), delims=[delim]):
@@ -493,10 +502,10 @@ class Duel:
             await self.bot.reply("you can't duel yourself, silly!")
         elif user.id in duelists.get('protected', []):
             await self.bot.reply("%s is on the protected users list."
-                                    % user.display_name)
+                                 % user.display_name)
         elif author.id in duelists.get('protected', []):
             await self.bot.reply("you can't duel anyone while you're on "
-                                    " the protected users list.")
+                                 " the protected users list.")
         else:
             abort = False
 
@@ -553,14 +562,14 @@ class Duel:
                     msg += '{0} has {0.wins} wins, {0.losses} losses, ' \
                         '{0.draws} draws{1}'.format(p, end)
             else:
-                victor=None
+                victor = None
                 for p in [p1, p2]:
                     p.draws += 1
                 msg = 'After %d rounds, the duel ends in a tie!' % (i + 1)
 
             await self.bot.say(msg)
             self.bot.dispatch('duel_completion', channel=channel,
-                                players=(p1,p2), victor=victor)
+                              players=(p1, p2), victor=victor)
         except:
             raise
         finally:
@@ -597,8 +606,8 @@ class Duel:
         # Select move, action, object, etc
         movelist = nested_random(moves)
         hp_delta = movelist.pop()  # always last
-        #randomize damage/healing done by -/+ 33%
-        hp_delta = math.floor(((hp_delta * random.randint(66, 133))/100))
+        # randomize damage/healing done by -/+ 33%
+        hp_delta = math.floor(((hp_delta * random.randint(66, 133)) / 100))
         move = movelist.pop(0)  # always first
         verb = movelist.pop(0) if movelist else None  # Optional
         obj = movelist.pop() if movelist else None  # Optional
@@ -614,6 +623,7 @@ class Duel:
         except:
             raise
         return msg
+
 
 def weighted_choice(choices):
     total = sum(w for c, w in choices.items())
