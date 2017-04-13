@@ -483,7 +483,7 @@ class ActivityLogger(object):
         fname = os.path.join(*path)
         self.gethandle(fname, mode=mode).write(' '.join(entry) + '\n')
 
-    async def message_handler(self, message, *args, force_attachments=False, **kwargs):
+    async def message_handler(self, message, *args, force_attachments=None, **kwargs):
         dl_attachment = self.should_download(message)
         if force_attachments is not None:
             dl_attachment = force_attachments
