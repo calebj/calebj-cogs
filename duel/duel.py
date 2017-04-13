@@ -312,55 +312,97 @@ class Duel:
     def get_all_players(self, server: discord.Server):
         return [self.get_player(m) for m in server.members]
 
-    def format_display(self, server, mid):
-        member = server.get_member(mid)
-        if isinstance(member, discord.Member):
-            return member.display_name
-        elif member is None:
-            return 'missingno#%s' % mid
-
-    @checks.mod_or_permissions(administrator=True)
-    @commands.command(name="protect", pass_context=True)
-    async def _protect(self, ctx, user: discord.Member=None):
-        """Adds a member to the protected members list"""
-        server = ctx.message.server
-        if user is None:
-            await self.bot.say("Specify a user to add to the protection list.")
-        else:
-            duelists = self.duelists.get(server.id, {})
-            member_list = duelists.get("protected", [])
-            name = user.display_name
-            if user.id in member_list:
-                await self.bot.say("%s is already in the protection list "
-                                   % name)
+    def format_display(self, server, id):
+        if id.startswith('r'):
+            role = discord.utils.get(server.roles, id=id[1:])
+            if role:
+                return 'Everyone with the role %s' % role
             else:
-                member_list.append(user.id)
-                duelists['protected'] = member_list
-                self.duelists[server.id] = duelists
-                dataIO.save_json(JSON_PATH, self.duelists)
-                await self.bot.say("%s has been successfully added to the "
-                                   "protection list." % name)
+                return 'missingno#%s' % id
+        else:
+            member = server.get_member(id)
+            if member:
+                return member.display_name
+            else:
+                return 'missingno#%s' % id
+
+    def is_protected(self, member: discord.Member) -> bool:
+        sid = member.server.id
+        protected = set(self.duelists.get(sid, {}).get('protected', []))
+        roles = set('r' + r.id for r in member.roles)
+        return member.id in protected or bool(protected & roles)
+
+    def protect_common(self, obj, protect=True):
+        if not isinstance(obj, (discord.Member, discord.Role)):
+            raise TypeError('Can only pass member or role objects.')
+        server = obj.server
+        id = ('r' if type(obj) is discord.Role else '') + obj.id
+
+        protected = self.duelists.get(server.id, {}).get("protected", [])
+        if protect == (id in protected):
+            return False
+        elif protect:
+            protected.append(id)
+        else:
+            protected.remove(id)
+
+        if server.id not in self.duelists:
+            self.duelists[server.id] = {}
+        self.duelists[server.id]['protected'] = protected
+        dataIO.save_json(JSON_PATH, self.duelists)
+        return True
 
     @checks.mod_or_permissions(administrator=True)
-    @commands.command(name="unprotect", pass_context=True)
-    async def _unprotect(self, ctx, user: discord.Member=None):
+    @commands.group(name="protect", invoke_without_command=True, no_pm=True, pass_context=True)
+    async def _protect(self, ctx, user: discord.Member):
+        """Adds a member or role to the protected members list"""
+        if ctx.invoked_subcommand is None:
+            await ctx.invoke(self._protect_user, user)
+
+    @checks.mod_or_permissions(administrator=True)
+    @commands.group(name="unprotect", invoke_without_command=True, no_pm=True, pass_context=True)
+    async def _unprotect(self, ctx, user: discord.Member):
+        """Removes a member or role to the protected members list"""
+        if ctx.invoked_subcommand is None:
+            await ctx.invoke(self._unprotect_user, user)
+
+    @_protect.command(name="user", pass_context=True)
+    async def _protect_user(self, ctx, user: discord.Member):
+        if self.protect_common(user, True):
+            await self.bot.say("%s has been successfully added to the "
+                               "protection list." % user.display_name)
+        else:
+            await self.bot.say("%s is already in the protection list."
+                               % user.display_name)
+
+    @_unprotect.command(name="user", pass_context=True)
+    async def _unprotect_user(self, ctx, user: discord.Member):
         """Removes a member from the duel protection list"""
-        server = ctx.message.server
-        if user is None:
-            await self.bot.say("Specify a user to remove from the protection "
-                               "list.")
+        if self.protect_common(user, False):
+            await self.bot.say("%s has been successfully removed from the "
+                               "protection list." % user.display_name)
         else:
-            duelists = self.duelists.get(server.id, {})
-            member_list = duelists.get("protected", [])
-            name = user.display_name
-            if user.id not in member_list:
-                await self.bot.say("%s is not currently in the protection "
-                                   "list." % name)
-            else:
-                self.duelists[server.id]["protected"].remove(user.id)
-                dataIO.save_json(JSON_PATH, self.duelists)
-                await self.bot.say("%s has been successfully removed from the "
-                                   "list." % name)
+            await self.bot.say("%s is not in the protection list."
+                               % user.display_name)
+
+    @_protect.command(name="role", pass_context=True)
+    async def _protect_role(self, ctx, role: discord.Role):
+        if self.protect_common(role, True):
+            await self.bot.say("%s has been successfully added to the "
+                               "protection list." % role.name)
+        else:
+            await self.bot.say("%s is already in the protection list."
+                               % role.name)
+
+    @_unprotect.command(name="role", pass_context=True)
+    async def _unprotect_role(self, ctx, role: discord.Role):
+        """Removes a member from the duel protection list"""
+        if self.protect_common(role, False):
+            await self.bot.say("%s has been successfully removed from the "
+                               "protection list." % role.name)
+        else:
+            await self.bot.say("%s is not in the protection list."
+                               % role.name)
 
     @commands.command(name="protected", pass_context=True, aliases=['protection'])
     async def _protection(self, ctx):
@@ -500,12 +542,12 @@ class Duel:
             await self.bot.say("There's already a duel underway in this channel!")
         elif user == author:
             await self.bot.reply("you can't duel yourself, silly!")
-        elif user.id in duelists.get('protected', []):
-            await self.bot.reply("%s is on the protected users list."
-                                 % user.display_name)
-        elif author.id in duelists.get('protected', []):
+        elif self.is_protected(author):
             await self.bot.reply("you can't duel anyone while you're on "
                                  " the protected users list.")
+        elif self.is_protected(user):
+            await self.bot.reply("%s is on the protected users list."
+                                 % user.display_name)
         else:
             abort = False
 
