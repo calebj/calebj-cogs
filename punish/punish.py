@@ -284,6 +284,7 @@ class Punish:
 
     async def _punish_cmd_common(self, ctx, member, duration, reason, quiet=False):
         server = ctx.message.server
+        note = ''
 
         if ctx.message.author.top_role <= member.top_role:
             await self.bot.say('Permission denied.')
@@ -291,10 +292,9 @@ class Punish:
 
         if duration and duration.lower() in ['forever', 'inf', 'infinite']:
             duration = None
-            timestamp = None
         else:
             if not duration:
-                msg += ' Using default duration of ' + DEFAULT_TIMEOUT
+                note += ' Using default duration of ' + DEFAULT_TIMEOUT
                 duration = DEFAULT_TIMEOUT
 
             try:
@@ -324,13 +324,14 @@ class Punish:
         else:
             msg = 'Done.'
 
-            timestamp = time.time() + duration
+        if note:
+            msg += ' ' + note
 
         if server.id not in self.json:
             self.json[server.id] = {}
 
         self.json[server.id][member.id] = {
-            'until': timestamp,
+            'until': (time.time() + duration) if duration else None,
             'by': ctx.message.author.id,
             'reason': reason
         }
