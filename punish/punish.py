@@ -440,7 +440,7 @@ class Punish:
     async def on_server_role_update(self, before, after):
         server = before.server
         role = await self.get_role(server)
-        if before.id != role.id:
+        if not (before and after) or before.id != role.id:
             return
         if after.position != (server.me.top_role.position - 1):
             if after < server.me.top_role:
