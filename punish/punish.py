@@ -253,7 +253,7 @@ class Punish:
                           % server.name)
                 continue
 
-            for member_id, data in members.items():
+            for member_id, data in members.copy().items():
                 if not member_id.isdigit():
                     continue
 
