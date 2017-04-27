@@ -106,7 +106,7 @@ class DataDog:
                      'bot_id:' + self.bot.user.id,
                      'bot_name:' + self.bot.user.name]
         self.send_all()
-        await asyncio.sleep(self.settings['INTERVAL'])
+        await asyncio.sleep(self.settings.get('INTERVAL', 5))
         if self is self.bot.get_cog('DataDog'):
             self.task = self.bot.loop.create_task(self.loop_task())
 
