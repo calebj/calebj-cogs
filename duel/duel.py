@@ -56,7 +56,7 @@ h#}R?|gM+Vi@86o4PzMN&Cj+F`Zw_kGKql~p`av`ukR%5s^p3PGSJ*O*W@DU$_p>MOi~|M9J_0ZGW={&
 NN17LtHkqmk4hU=OkkFvlkfXbF<@GE1=#G!0eUc_U?_|ci*hY`#&-hR~Ho%GGz%*gP!w+$q;o_9f8~i9of>B(%Nz4#i{rl88!hS-4ioB7_$y?L7L<6079UO0
 4d^90nmC13R$whoR8ozG@`f4Rpr{m%v$ZMYhlB><uhFYKh0`U`_^8""".replace('\n', ''))))
 
-__version__ = '1.5.0'
+__version__ = '1.5.1'
 
 
 def indicatize(d):
@@ -529,12 +529,13 @@ class Duel:
         keep_keys = {'protected', 'edit_posts'}
         sid = ctx.message.server.id
         data = self.duelists.get(sid, {})
+        dks = set(data.keys())
 
-        if set(data.keys()) <= keep_keys:
+        if dks <= keep_keys:
             await self.bot.say('Nothing to reset.')
             return
 
-        keep_data = {k: data[k] for k in keep_keys}
+        keep_data = {k: data[k] for k in keep_keys & dks}
         self.duelists[sid] = keep_data
         dataIO.save_json(JSON_PATH, self.duelists)
         await self.bot.say('Duel records cleared.')
