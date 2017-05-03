@@ -1,0 +1,9 @@
+{
+    "AUTHOR" : "GrumpiestVulcan (CalebJ)",
+    "INSTALL_MSG" : "Done.",
+    "NAME" : "Dice",
+    "SHORT" : "Evaluate dice expressions.",
+    "DESCRIPTION" : "Evaluate a variety of advanced dice expressions using the dice library.",
+    "TAGS" : ["dice", "die", "d20", "roll", "fun", "game", "rpg", "random"],
+    "REQUIREMENTS" : ["dice"]
+}
