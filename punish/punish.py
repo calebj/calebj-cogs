@@ -215,6 +215,55 @@ class Punish:
         else:
             await self.bot.say("The punish role couldn't be found in this server.")
 
+    @commands.command(pass_context=True, no_pm=True)
+    @checks.mod_or_permissions(manage_messages=True)
+    async def fixpunish(self, ctx):
+        server = ctx.message.server
+        default_name = DEFAULT_ROLE_NAME
+        role_id = self.json.get(server.id, {}).get('ROLE_ID')
+
+        if role_id:
+            role = discord.utils.get(server.roles, id=role_id)
+        else:
+            role = discord.utils.get(server.roles, name=default_name)
+
+        perms = server.me.server_permissions
+        if not perms.manage_roles and perms.manage_channels:
+            await self.bot.say("The Manage Roles and Manage Channels permissions are required to use this command.")
+            return
+
+        if not role:
+            msg = "The %s role doesn't exist; Creating it now... " % default_name
+
+            msgobj = await self.bot.say(msg)
+
+            perms = discord.Permissions.none()
+            role = await self.bot.create_role(server, name=default_name, permissions=perms)
+        else:
+            msgobj = await self.bot.say('Punish role exists... ')
+
+        if role.position != (server.me.top_role.position - 1):
+            if role < server.me.top_role:
+                msgobj = await self.bot.edit_message(msgobj, msgobj.content + 'moving role to higher position... ')
+                await self.bot.move_role(server, role, server.me.top_role.position - 1)
+            else:
+                await self.bot.edit_message(msgobj, msgobj.content + 'role is too high to manage.'
+                                            ' Please move it to below my highest role.')
+                return
+
+        msgobj = await self.bot.edit_message(msgobj, msgobj.content + '(re)configuring channels... ')
+
+        for channel in server.channels:
+            await self.setup_channel(channel, role)
+
+        await self.bot.edit_message(msgobj, msgobj.content + 'done.')
+
+        if role and role.id != role_id:
+            if server.id not in self.json:
+                self.json[server.id] = {}
+            self.json[server.id]['ROLE_ID'] = role.id
+            self.save()
+
     async def get_role(self, server, quiet=False, create=False):
         default_name = DEFAULT_ROLE_NAME
         role_id = self.json.get(server.id, {}).get('ROLE_ID')
@@ -407,7 +456,7 @@ class Punish:
             self._unpunish_data(member)
             await self.bot.remove_roles(member, role)
 
-            msg = 'Your punishiment in %s has ended.' % member.server.name
+            msg = 'Your punishment in %s has ended.' % member.server.name
             if reason:
                 msg += "\nReason was: %s" % reason
 
@@ -446,7 +495,7 @@ class Punish:
 
         role = await self.get_role(before.server)
         if role and role in before.roles and role not in after.roles:
-            msg = 'Your punishiment in %s was ended early by a moderator/admin.' % before.server.name
+            msg = 'Your punishment in %s was ended early by a moderator/admin.' % before.server.name
             if self.json[sid][before.id]['reason']:
                 msg += '\nReason was: ' + self.json[sid][before.id]['reason']
 
