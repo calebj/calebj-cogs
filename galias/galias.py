@@ -2,6 +2,7 @@ from discord.ext import commands
 from .utils.chat_formatting import box, pagify
 from .utils.dataIO import dataIO
 from .utils import checks
+import asyncio
 import os
 from copy import deepcopy
 
@@ -41,7 +42,7 @@ h#}R?|gM+Vi@86o4PzMN&Cj+F`Zw_kGKql~p`av`ukR%5s^p3PGSJ*O*W@DU$_p>MOi~|M9J_0ZGW={&
 NN17LtHkqmk4hU=OkkFvlkfXbF<@GE1=#G!0eUc_U?_|ci*hY`#&-hR~Ho%GGz%*gP!w+$q;o_9f8~i9of>B(%Nz4#i{rl88!hS-4ioB7_$y?L7L<6079UO0
 4d^90nmC13R$whoR8ozG@`f4Rpr{m%v$ZMYhlB><uhFYKh0`U`_^8""".replace('\n', ''))))
 
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 
 class GlobalAlias:
@@ -72,8 +73,11 @@ class GlobalAlias:
         if self.part_of_existing_command(command):
             await self.bot.say("'%s' is already a command or alias." % command)
             return
-        server = ctx.message.server
-        prefix = self.get_prefix(server, to_execute)
+
+        new_message = deepcopy(ctx.message)
+        new_message.content = to_execute
+        prefix = await self.get_prefix(new_message)
+
         if prefix is not None:
             to_execute = to_execute[len(prefix):]
         if command not in self.bot.commands:
@@ -144,9 +148,8 @@ class GlobalAlias:
         if not self.bot.user_allowed(message):
             return
 
+        prefix = await self.get_prefix(message)
         msg = message.content
-        server = message.server
-        prefix = self.get_prefix(server, msg)
 
         if prefix:
             alias = self.first_word(msg[len(prefix):]).lower()
@@ -171,10 +174,15 @@ class GlobalAlias:
     def first_word(self, msg):
         return msg.split(" ")[0]
 
-    def get_prefix(self, server, msg):
-        prefixes = self.bot.settings.get_prefixes(server)
+    async def get_prefix(self, msg):
+        prefixes = self.bot.command_prefix
+        if callable(prefixes):
+            prefixes = prefixes(self.bot, msg)
+            if asyncio.iscoroutine(prefixes):
+                prefixes = await prefixes
+
         for p in prefixes:
-            if msg.startswith(p):
+            if msg.content.startswith(p):
                 return p
         return None
 

@@ -2,6 +2,7 @@ from discord.ext import commands
 from .utils.chat_formatting import pagify, box
 from .utils.dataIO import dataIO
 from .utils import checks
+import asyncio
 import os
 import re
 
@@ -39,7 +40,7 @@ h#}R?|gM+Vi@86o4PzMN&Cj+F`Zw_kGKql~p`av`ukR%5s^p3PGSJ*O*W@DU$_p>MOi~|M9J_0ZGW={&
 NN17LtHkqmk4hU=OkkFvlkfXbF<@GE1=#G!0eUc_U?_|ci*hY`#&-hR~Ho%GGz%*gP!w+$q;o_9f8~i9of>B(%Nz4#i{rl88!hS-4ioB7_$y?L7L<6079UO0
 4d^90nmC13R$whoR8ozG@`f4Rpr{m%v$ZMYhlB><uhFYKh0`U`_^8""".replace('\n', ''))))
 
-__version__ = '2.0.0'
+__version__ = '2.1.0'
 
 
 class CustomGlobalCommands:
@@ -225,9 +226,8 @@ class CustomGlobalCommands:
         await self.bot.say(msg)
 
     async def on_message(self, message):
-        server = message.server
         msg = message.content
-        prefix = self.get_prefix(server, msg)
+        prefix = await self.get_prefix(message)
         if not self.bot.user_allowed(message) or not prefix:
             return
 
@@ -242,15 +242,19 @@ class CustomGlobalCommands:
             else:
                 await self.bot.send_message(message.channel, ret)
 
-
     async def on_command(self, command, ctx):
         if ctx.cog is self:
             self.analytics.command(ctx)
 
-    def get_prefix(self, server, msg):
-        prefixes = self.bot.settings.get_prefixes(server)
+    async def get_prefix(self, msg):
+        prefixes = self.bot.command_prefix
+        if callable(prefixes):
+            prefixes = prefixes(self.bot, msg)
+            if asyncio.iscoroutine(prefixes):
+                prefixes = await prefixes
+
         for p in prefixes:
-            if msg.startswith(p):
+            if msg.content.startswith(p):
                 return p
         return None
 
