@@ -43,11 +43,10 @@ class PurgePins:
 
     async def start_task(self):
         await self.bot.wait_until_ready()
-        for cid in self.settings():
+        for cid in self.settings:
             channel = self.bot.get_channel(cid)
             print('channel_id ' + cid)
             if channel:
-                print('got channel')
                 await self.do_pin_rotate(channel)
 
     def upgrade_settings(self, settings):
