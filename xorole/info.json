@@ -1,0 +1,9 @@
+{
+    "AUTHOR" : "GrumpiestVulcan (CalebJ)",
+    "INSTALL_MSG" : "Done. This cog was sponsored by Quiet#8251 for discord.gg/pokken.",
+    "NAME" : "XORoles",
+    "SHORT" : "Self-role functionality with single-membership role sets.",
+    "DESCRIPTION" : "This cog allows you to specify 'role sets', which are groups of roles to which a member can assign only one to themselves at a time. When one role is added, any others in that group are removed. There is also the toggle command, which will either toggle a single-length roleset on or off, or between two roles in a roleset (they must already have one in order to toggle).",
+    "TAGS" : ["role", "roles", "tools", "utility"],
+    "REQUIREMENTS" : []
+}
