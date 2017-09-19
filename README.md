@@ -11,6 +11,7 @@ If you have questions or would like some support for these cogs, please head ove
 * customgcom: Custom global commands.
 * datadog: Publish various metrics and events to a local statsd instance.
 * description: Change the header of Red's [p]help command.
+* dice: Wraps the python-dice library. Command is `[p]rd <expression>`.
 * duel: Procedurally generated duel with a flexible lexicon system.
 * galias: Bot-wide command aliases. Only owner can add/remove them.
 * gallery: clean up comments from channels focused on embedded content.
@@ -20,6 +21,7 @@ If you have questions or would like some support for these cogs, please head ove
 * serverquotes: Store and recall memorable quotes for your server.
 * sinfo: Simple text dump of server and channel information.
 * watchdog: Helps systemd restart your bot if it goes offline. See below.
+* xorole: Self-role functionality with single-membership role sets.
 * zalgo: H͕̭͒̈́E̡̩͋͐ C̺̻̉O̟͋M̞̐Ę͒ͅS̬̣̍́.
 
 
