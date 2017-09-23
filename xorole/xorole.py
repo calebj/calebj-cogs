@@ -11,7 +11,7 @@ Commissioned 2017-07-27 by QuietRepentance (Quiet#8251) for discord.gg/pokken"""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#7377)"
 __copyright__ = "Copyright 2017, Holocor LLC"
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 JSON = 'data/xorole.json'
 
@@ -60,6 +60,9 @@ class NoRolesetsFound(XORoleException):
     pass
 
 class RoleNotFound(XORoleException):
+    pass
+
+class PermissionsError(XORoleException):
     pass
 
 
@@ -190,18 +193,22 @@ class XORole:
 
         return found, notfound
 
-    async def role_add_remove(self, member, to_add, to_remove):
-        i = 0
-        while to_remove and i < 10:
-            await self.bot.remove_roles(member, *to_remove)
-            await asyncio.sleep(0.2)
-            i += 1
-            to_remove = [r for r in to_remove if r in member.roles]
+    async def role_add_remove(self, member, to_add=(), to_remove=()):
 
-        missing_roles = list(set(to_add) - set(member.roles))
+        roles = set(member.roles)
+        replace_with = (roles | set(to_add)) - set(to_remove)
 
-        if missing_roles:
-            await self.bot.add_roles(member, *missing_roles)
+        if roles != replace_with:
+            try:
+                await self.bot.replace_roles(member, *list(replace_with))
+            except discord.errors.Forbidden:
+                if not (member.server.me.server_permissions.manage_roles or
+                        member.server.me.server_permissions.administrator):
+                    err = "I don't have permission to manage roles."
+                else:
+                    err = ('a role I tried to assign or remove is too high '
+                           'for me to do so.')
+                raise PermissionsError('Error updating roles: ' + err)
 
     @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     async def xorole(self, ctx, *, role: str = None):
@@ -293,7 +300,7 @@ class XORole:
                 to_remove = self.get_roleset_memberships(member, role_or_roleset)
 
             if to_remove:
-                await self.bot.remove_roles(member, *to_remove)
+                await self.role_add_remove(member, to_remove=to_remove)
                 plural = 'roles' if len(to_remove) > 1 else 'role'
                 rlist = ', '.join(r.name for r in to_remove)
                 await self.bot.say('Removed the %s: %s.' % (plural, rlist))
