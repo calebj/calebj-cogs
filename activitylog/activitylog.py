@@ -87,15 +87,21 @@ class LogHandle:
     """basic wrapper for logfile handles, used to keep track of stale handles"""
     def __init__(self, path, time=None, mode='a', buf=1):
         self.handle = open(path, mode, buf, errors='backslashreplace')
+        self.lock = asyncio.Lock()
+
         if time:
             self.time = time
         else:
             self.time = datetime.fromtimestamp(os.path.getmtime(path))
 
+    async def write(self, value):
+        async with self.lock:
+            self._write(value)
+
     def close(self):
         self.handle.close()
 
-    def write(self, value):
+    def _write(self, value):
         self.time = datetime.utcnow()
         self.handle.write(value)
 
@@ -488,7 +494,7 @@ class ActivityLogger(object):
 
         return aid, url, path, filename, truncated
 
-    def log(self, location, text, timestamp=None, force=False, subfolder=None, mode='a'):
+    async def log(self, location, text, timestamp=None, force=False, subfolder=None, mode='a'):
         if not timestamp:
             timestamp = datetime.utcnow()
         if self.lock or not (force or self.should_log(location)):
@@ -515,7 +521,8 @@ class ActivityLogger(object):
         entry.append(text)
 
         fname = os.path.join(*path)
-        self.gethandle(fname, mode=mode).write(' '.join(entry) + '\n')
+        handle = self.gethandle(fname, mode=mode)
+        await handle.write(' '.join(entry) + '\n')
 
     async def message_handler(self, message, *args, force_attachments=None, **kwargs):
         dl_attachment = self.should_download(message)
@@ -530,7 +537,7 @@ class ActivityLogger(object):
         else:
             entry = MESSAGE_TEMPLATE.format(message)
 
-        self.log(message.channel, entry, message.timestamp, *args, **kwargs)
+        await self.log(message.channel, entry, message.timestamp, *args, **kwargs)
 
         if message.attachments and dl_attachment:
             dl_path = os.path.join(path, filename)
@@ -550,20 +557,20 @@ class ActivityLogger(object):
     async def on_message_edit(self, before, after):
         timestamp = before.timestamp.strftime(TIMESTAMP_FORMAT)
         entry = EDIT_TEMPLATE.format(before, after, timestamp)
-        self.log(after.channel, entry, after.edited_timestamp)
+        await self.log(after.channel, entry, after.edited_timestamp)
 
     async def on_message_delete(self, message):
         timestamp = message.timestamp.strftime(TIMESTAMP_FORMAT)
         entry = DELETE_TEMPLATE.format(message, timestamp)
-        self.log(message.channel, entry)
+        await self.log(message.channel, entry)
 
     async def on_server_join(self, server):
         entry = 'this bot joined the server'
-        self.log(server, entry)
+        await self.log(server, entry)
 
     async def on_server_remove(self, server):
         entry = 'this bot left the server'
-        self.log(server, entry)
+        await self.log(server, entry)
 
     async def on_server_update(self, before, after):
         entries = []
@@ -580,15 +587,15 @@ class ActivityLogger(object):
             entries.append('Server icon changed from %s to %s' %
                            (before.icon_url, after.icon_url))
         for e in entries:
-            self.log(before, e)
+            await self.log(before, e)
 
     async def on_server_role_create(self, role):
         entry = "Role created: '%s' (id %s)" % (role, role.id)
-        self.log(role.server, entry)
+        await self.log(role.server, entry)
 
     async def on_server_role_delete(self, role):
         entry = "Role deleted: '%s' (id %s)" % (role, role.id)
-        self.log(role.server, entry)
+        await self.log(role.server, entry)
 
     async def on_server_role_update(self, before, after):
         entries = []
@@ -616,23 +623,23 @@ class ActivityLogger(object):
             entries.append("Role position: '{0}' changed from "
                            "{0.position} to {1.position}".format(before, after))
         for e in entries:
-            self.log(before.server, e)
+            await self.log(before.server, e)
 
     async def on_member_join(self, member):
         entry = 'Member join: @{0} (id {0.id})'.format(member)
-        self.log(member.server, entry)
+        await self.log(member.server, entry)
 
     async def on_member_remove(self, member):
         entry = 'Member leave: @{0} (id {0.id})'.format(member)
-        self.log(member.server, entry)
+        await self.log(member.server, entry)
 
     async def on_member_ban(self, member):
         entry = 'Member ban: @{0} (id {0.id})'.format(member)
-        self.log(member.server, entry)
+        await self.log(member.server, entry)
 
     async def on_member_unban(self, server, user):
         entry = 'Member unban: @{0} (id {0.id})'.format(user)
-        self.log(server, entry)
+        await self.log(server, entry)
 
     async def on_member_update(self, before, after):
         entries = []
@@ -652,19 +659,19 @@ class ActivityLogger(object):
             for r in removed:
                 entries.append("Member role remove: The '%s' role was removed from @%s" % (r, after))
         for e in entries:
-            self.log(before.server, e)
+            await self.log(before.server, e)
 
     async def on_channel_create(self, channel):
         if channel.is_private:
             return
         entry = 'Channel created: %s' % channel
-        self.log(channel.server, entry)
+        await self.log(channel.server, entry)
 
     async def on_channel_delete(self, channel):
         if channel.is_private:
             return
         entry = 'Channel deleted: %s' % channel
-        self.log(channel.server, entry)
+        await self.log(channel.server, entry)
 
     async def on_channel_update(self, before, after):
         if type(before) is discord.PrivateChannel:
@@ -681,11 +688,12 @@ class ActivityLogger(object):
                            'to {1.position}'.format(before, after))
         # TODO: channel permissions overrides
         for e in entries:
-            self.log(before.server, e)
+            await self.log(before.server, e)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self:
             self.analytics.command(ctx)
+
 
 def check_folders():
     if not os.path.exists(PATH):
