@@ -389,6 +389,22 @@ class ActivityLogger(object):
             await self.bot.say('Logging disabled for %s' % server)
         self.save_json()
 
+    @logset.command(pass_context=True, no_pm=True, name='voice')
+    async def set_voice(self, ctx, on_off: bool):
+        """Sets logging on or off for ALL voice channel events."""
+
+        server = ctx.message.server
+
+        if server.id not in self.settings:
+            self.settings[server.id] = {}
+        self.settings[server.id]['voice'] = on_off
+
+        if on_off:
+            await self.bot.say('Voice event logging enabled for %s' % server)
+        else:
+            await self.bot.say('Voice event logging disabled for %s' % server)
+        self.save_json()
+
     @logset.command(pass_context=True, no_pm=True, name='events')
     async def set_events(self, ctx, on_off: bool):
         """Sets logging on or off for server events."""
@@ -407,6 +423,14 @@ class ActivityLogger(object):
 
     def save_json(self):
         dataIO.save_json(JSON, self.settings)
+
+    @staticmethod
+    def get_voice_flags(member):
+        flags = []
+        for f in ('deaf', 'mute', 'self_deaf', 'self_mute'):
+            if getattr(member, f, None):
+                flags.append(f)
+        return flags
 
     def gethandle(self, path, mode='a'):
         """Manages logfile handles, culling stale ones and creating folders"""
@@ -454,7 +478,12 @@ class ActivityLogger(object):
         elif type(location) is discord.Channel:
             if location.server.id in self.settings:
                 loc = self.settings[location.server.id]
-                return loc.get('all', False) or loc.get(location.id, default)
+                opts = [loc.get('all', False), loc.get(location.id, default)]
+
+                if location.type is discord.ChannelType.voice:
+                    opts.append(loc.get('voice', False))
+
+                return any(opts)
 
         elif type(location) is discord.PrivateChannel:
             return self.settings.get('direct', default)
@@ -693,6 +722,46 @@ class ActivityLogger(object):
     async def on_command(self, command, ctx):
         if ctx.cog is self:
             self.analytics.command(ctx)
+
+    async def on_voice_state_update(self, before, after):
+        if before.voice_channel != after.voice_channel:
+            if before.voice_channel:
+                msg = "Voice channel leave: {0} (id {0.id})"
+                if after.voice_channel:
+                    msg += ' moving to {1.voice_channel}'
+
+                await self.log(before.voice_channel, msg.format(before, after))
+
+            if after.voice_channel:
+                msg = "Voice channel join: {0} (id {0.id})"
+                if before.voice_channel:
+                    msg += ', moved from {0.voice_channel}'
+
+                flags = self.get_voice_flags(after)
+                if flags:
+                    msg += ', flags: %s' % ','.join(flags)
+
+                await self.log(after.voice_channel, msg.format(before, after))
+
+        if before.deaf != after.deaf:
+            verb = 'deafen' if after.deaf else 'undeafen'
+            await self.log(before.voice_channel,
+                           'Server {0}: {1} (id {1.id})'.format(verb, before))
+
+        if before.mute != after.mute:
+            verb = 'mute' if after.mute else 'unmute'
+            await self.log(before.voice_channel,
+                           'Server {0}: {1} (id {1.id})'.format(verb, before))
+
+        if before.self_deaf != after.self_deaf:
+            verb = 'deafen' if after.self_deaf else 'undeafen'
+            await self.log(before.voice_channel,
+                           'Server self-{0}: {1} (id {1.id})'.format(verb, before))
+
+        if before.self_mute != after.self_mute:
+            verb = 'mute' if after.self_mute else 'unmute'
+            await self.log(before.voice_channel,
+                           'Server self-{0}: {1} (id {1.id})'.format(verb, before))
 
 
 def check_folders():
