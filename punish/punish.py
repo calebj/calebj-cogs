@@ -39,7 +39,7 @@ h#}R?|gM+Vi@86o4PzMN&Cj+F`Zw_kGKql~p`av`ukR%5s^p3PGSJ*O*W@DU$_p>MOi~|M9J_0ZGW={&
 NN17LtHkqmk4hU=OkkFvlkfXbF<@GE1=#G!0eUc_U?_|ci*hY`#&-hR~Ho%GGz%*gP!w+$q;o_9f8~i9of>B(%Nz4#i{rl88!hS-4ioB7_$y?L7L<6079UO0
 4d^90nmC13R$whoR8ozG@`f4Rpr{m%v$ZMYhlB><uhFYKh0`U`_^8""".replace('\n', ''))))
 
-__version__ = '1.5.0'
+__version__ = '1.5.1'
 
 try:
     from tabulate import tabulate
@@ -313,6 +313,7 @@ class Punish:
         if channel.type == discord.ChannelType.text:
             perms.send_messages = False
             perms.send_tts_messages = False
+            perms.add_reactions = False
         elif channel.type == discord.ChannelType.voice:
             perms.speak = False
 
