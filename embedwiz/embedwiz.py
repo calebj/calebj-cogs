@@ -1,4 +1,5 @@
 import random
+import re
 import string
 from urllib.parse import urlparse
 
@@ -14,7 +15,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#7377)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 # Analytics core
 import zlib, base64
@@ -75,6 +76,12 @@ def is_valid_url(url):
     netloc_split = token.netloc.split('.')
     netloc_ok = len(list(filter(None, netloc_split))) > 1
     return scheme_ok and netloc_ok
+
+
+def extract_md_link(inputstr):
+    match = re.match(r'^\[([^\]]*)\]\(([^)]*)\)$', inputstr)
+    if match:
+        return match.groups()
 
 
 class EmbedWizard:
@@ -155,6 +162,13 @@ class EmbedWizard:
 
         title, color, ftext, fimage, image, timage, body = map(str.strip, split)
 
+        title_url = extract_md_link(title) or Embed.Empty
+        if title_url:
+            title, title_url = title_url
+            if not is_valid_url(title_url):
+                await self.bot.say(error('Invalid title URL!'))
+                return
+
         try:
             color = int(color_converter(color), 16)
         except ValueError as e:
@@ -213,7 +227,7 @@ class EmbedWizard:
             else:
                 body = msg.content
 
-        embed = Embed(title=title, color=color, description=body)
+        embed = Embed(title=title, color=color, description=body, url=title_url)
 
         if image:
             embed.set_image(url=image)
