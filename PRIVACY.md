@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2017-04-27
+Last updated: 2018-01-27
 
 Caleb Johnson ("I", "my" or "me") develops the cogs [here](https://github.com/calebj/calebj-cogs) (the "Cogs", or a "Cog"). This page informs you of my policies regarding the collection, use and disclosure of Personal Information I receive from users of the Cogs.
 
@@ -32,6 +32,6 @@ This Privacy Policy is effective as of 2017-04-27 and will remain in effect exce
 
 I reserve the right to update or change my Privacy Policy at any time and you should check this Privacy Policy periodically. Your continued use of the Cogs after I post any modifications to the Privacy Policy on this page will constitute your acknowledgment of the modifications and your consent to abide and be bound by the modified Privacy Policy.
 
-Contact Us
+## Contact
 
-If you have any questions about this Privacy Policy, please contact me through Discord (calebj#7377) or [by email](me@calebj.io).
+If you have any questions about this Privacy Policy, please contact me through Discord (calebj#0001) or [by email](me@calebj.io).
