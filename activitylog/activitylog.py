@@ -40,7 +40,7 @@ j?eU|2-?mt33h(=_q0W1t2%Eh!{tYLEc}Mt9OYzlHjgLIxw*IG|Q2Y)cDFqhkTpRf%80yB^hbNROrcj?
 ttuW*T;R(lg2tI`?O{U)deU|kQbe|?jCodq{VOfM0T=+2xdd{yLPSOq(K>n};{e*-WN2`J^F#<j9u#Np6ZUYwh""".replace("\n", ""))))
 # End enalytics core
 
-__version__ = '1.3.0'
+__version__ = '1.4.0'
 
 TIMESTAMP_FORMAT = '%Y-%m-%d %X'  # YYYY-MM-DD HH:MM:SS
 PATH_LIST = ['data', 'activitylogger']
@@ -52,9 +52,14 @@ EDIT_TIMEDELTA = timedelta(seconds=3)
 AUTHOR_TEMPLATE = "@{0.author.name}#{0.author.discriminator}"
 MESSAGE_TEMPLATE = AUTHOR_TEMPLATE + ": {0.clean_content}"
 
-# 0 is Message object, 1 is attachment path
+# 0 is Message object, 1 is attachment URL
 ATTACHMENT_TEMPLATE = (AUTHOR_TEMPLATE + ": {0.clean_content} (attachment "
-                       "saved to {1})")
+                       "url(s): {1})")
+
+# 0 is Message object, 1 is attachment path
+# TODO: support multiple attachments?
+DOWNLOAD_TEMPLATE = (AUTHOR_TEMPLATE + ": {0.clean_content} (attachment "
+                     "saved to {1})")
 
 # 0 is before, 1 is after, 2 is formatted timestamp
 EDIT_TEMPLATE = (AUTHOR_TEMPLATE + " edited message from {2} "
@@ -560,9 +565,12 @@ class ActivityLogger(object):
 
         if message.attachments and dl_attachment:
             aid, url, path, filename, trunc = self.process_attachment(message)
-            entry = ATTACHMENT_TEMPLATE.format(message, filename)
+            entry = DOWNLOAD_TEMPLATE.format(message, filename)
             if trunc:
                 entry += ' (filename truncated)'
+        elif message.attachments:
+            urls = ','.join(a['url'] for a in message.attachments)
+            entry = ATTACHMENT_TEMPLATE.format(message, urls)
         else:
             entry = MESSAGE_TEMPLATE.format(message)
 
