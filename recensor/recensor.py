@@ -50,7 +50,7 @@ j?eU|2-?mt33h(=_q0W1t2%Eh!{tYLEc}Mt9OYzlHjgLIxw*IG|Q2Y)cDFqhkTpRf%80yB^hbNROrcj?
 ttuW*T;R(lg2tI`?O{U)deU|kQbe|?jCodq{VOfM0T=+2xdd{yLPSOq(K>n};{e*-WN2`J^F#<j9u#Np6ZUYwh""".replace("\n", ""))))
 # End enalytics core
 
-__version__ = '1.4.1'
+__version__ = '1.5.0'
 
 
 class ReCensor:
@@ -327,6 +327,9 @@ class ReCensor:
                 regex = self.recache[regex] if regex in self.recache else re.compile(regex)
                 if (mode == MODE_EXCLUSIVE) != bool(regex.match(message.content)):  # xor
                     await self.bot.delete_message(message)
+
+    async def on_message_edit(self, old_message, new_message):
+        await self.on_message(new_message)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self:
