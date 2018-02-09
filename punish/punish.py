@@ -39,7 +39,7 @@ j?eU|2-?mt33h(=_q0W1t2%Eh!{tYLEc}Mt9OYzlHjgLIxw*IG|Q2Y)cDFqhkTpRf%80yB^hbNROrcj?
 ttuW*T;R(lg2tI`?O{U)deU|kQbe|?jCodq{VOfM0T=+2xdd{yLPSOq(K>n};{e*-WN2`J^F#<j9u#Np6ZUYwh""".replace("\n", ""))))
 # End enalytics core
 
-__version__ = '1.5.1'
+__version__ = '1.5.2'
 
 try:
     from tabulate import tabulate
@@ -353,7 +353,7 @@ class Punish:
                             reason += self.json[server.id][member_id]['reason']
                         await self._unpunish(member, reason)
                     else:  # member disappeared
-                        del(self.json[server.id][member.id])
+                        del(self.json[server.id][member_id])
 
                 elif member and role not in member.roles:
                     if role >= me.top_role:
