@@ -39,7 +39,7 @@ B%B=cR(L=XSj{1GuV5P~u@7tO>@BT#C?1b@;SP9HK!hc$dukO_F$`!QrKmCN_cK}HVkVxm6$S=WAH_Sd
 A37?8a7{(X9Fysa1F~?^KK87nzrr!Qtmh}*HpGHV0FCf}sS%el`_%RB4&POgMZU+J&eb|A1Lc)xrRZdC_Ku=n1WB&^?8dL=""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.5.2'
+__version__ = '1.6.0'
 
 try:
     from tabulate import tabulate
@@ -188,7 +188,7 @@ class Punish:
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
-    async def warn(self, ctx, user: discord.Member, *, reason: str=None):
+    async def pwarn(self, ctx, user: discord.Member, *, reason: str=None):
         """Warns a user with boilerplate about the rules."""
         msg = ['Hey %s, ' % user.mention]
         msg.append("you're doing something that might get you muted if you keep "
@@ -324,13 +324,13 @@ class Punish:
 
         for serverid, members in self.json.copy().items():
             server = self.bot.get_server(serverid)
-            me = server.me
 
             # Bot is no longer in the server
             if not server:
                 del(self.json[serverid])
                 continue
 
+            me = server.me
             role = await self.get_role(server, quiet=True, create=True)
             if not role:
                 log.error("Needed to create punish role in %s, but couldn't."
