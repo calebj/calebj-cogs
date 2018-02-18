@@ -7,21 +7,20 @@ from base64 import b64encode
 
 
 class GVAnalytics:
-    __version__ = 1.32
+    __version__ = 1.33
     STATS_URL = 'https://stats.calebj.io/piwik.php'
     BASE_URL = 'https://red.calebj.io/'
     PATH = 'data/lib_calebj/'
     JSON = PATH + 'analytics.json'
     Q1 = ("Hello! Caleb here. This is just a quick heads that I've started "
-          "gathering usage information for my cogs and other bot projects.\n")
-    Q2 = ("When enabled, your bot will send me anonymous data about which of "
-          "my cogs you've loaded and how many of each command you run, along "
-          "with which OS and python version you're running.\n"
+          "gathering usage information for my cogs.\n")
+    Q2 = ("When enabled, your bot will send anonymous data about which cogs "
+          "you've loaded and how many of each command you run, along with "
+          "which OS and python version you're running.\n"
           "Nobody but me has access to the data, and I won't share it.\n\n"
-          "You can read my full privacy policy in the link below, or contact "
-          "me via Discord (<@!152111727402680320>) or email (me@calebj.io) if "
-          "you have any questions.\n"
-          "<https://github.com/calebj/calebj-cogs/blob/master/PRIVACY.md>\n\n"
+          "You can read my full privacy policy here: "
+          "<https://github.com/calebj/calebj-cogs/blob/master/PRIVACY.md>.\n"
+          "Other questions? DM <@!152111727402680320> or email me@calebj.io ."
           )
     PARAM_BASE = {
         'idsite': 3,
@@ -49,21 +48,29 @@ class GVAnalytics:
         bot.add_cog(cog)
         return cog
 
-    def upgrade(self, n):
-        if n.__version__ > self.__version__:
-            self.bot.remove_cog(self)
-            c = n(self.bot, self.queue)
-            self.bot.add_cog(c)
-            return c
+    @classmethod
+    def replace(cls, oldcog):
+        if cls.__version__ > oldcog.__version__:
+            cog = cls(oldcog.bot, oldcog.queue)
+            cog.bot.remove_cog(oldcog.__class__.__name__)
+            cog.bot.add_cog(cog)
+            return cog
+
+    def upgrade(self, newcls):
+        if newcls.__version__ > self.__version__:
+            cog = newcls(self.bot, self.queue)
+            cog.bot.remove_cog(self.__class__.__name__)
+            cog.bot.add_cog(cog)
+            return cog
 
     def __unload(self):
         self.terminate = True
         self.task.cancel()
 
-    def save(s):
-        if not os.path.exists(s.PATH):
-            os.makedirs(s.PATH)
-        dataIO.save_json(s.JSON, s.data)
+    def save(self):
+        if not os.path.exists(self.PATH):
+            os.makedirs(self.PATH)
+        dataIO.save_json(self.JSON, self.data)
 
     def send(self, iface, cat, res=None, act=None, value=None, user=None, name_first=False):
         if self.terminate:
@@ -212,7 +219,7 @@ class AnalyticsInterface:
         if not cog:
             return GVAnalytics.start(self.bot)
 
-        return cog.upgrade(GVAnalytics) or cog
+        return GVAnalytics.replace(cog) or cog
 
 
 class CogAnalytics(AnalyticsInterface):
