@@ -7,65 +7,33 @@ import re
 from time import time
 from discord.ext import commands
 from cogs.utils.dataIO import dataIO
+from cogs.utils.chat_formatting import error
 
-__version__ = '1.2.1'
+__version__ = '1.3.0'
 
 logger = logging.getLogger("red.gallery")
 
 PATH = 'data/gallery'
 JSON = PATH + 'settings.json'
 
-POLL_INTERVAL = 5*60  # 5 minutes
-DEFAULT_EXPIRATION = '2d'
-UNIT_TABLE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
-UNIT_SUF_TABLE = {
-    'sec' : (1, ''),
-    'min' : (60, ''),
-    'hr'  : (60 * 60, 's'),
-    'day' : (60 * 60 * 24, 's')
-}
+POLL_INTERVAL = 5 * 60  # 5 minutes
 
-
-def _timespec_sec(t):
-    timespec = t[-1]
-    if timespec.lower() not in UNIT_TABLE:
-        raise ValueError('Unknown time unit "%c"' % timespec)
-    timeint = float(t[:-1])
-    return timeint * UNIT_TABLE[timespec]
-
-
-def _parse_time(time):
-    if any(u in time for u in UNIT_TABLE.keys()):
-        delim = '([0-9.]*[{}])'.format(''.join(UNIT_TABLE.keys()))
-        time = re.split(delim, time)
-        time = sum([_timespec_sec(t) for t in time if t != ''])
-    return int(time)
-
-
-def _generate_timespec(sec):
-    def sort_key(kt):
-        k, t = kt
-        return t[0]
-
-    timespec = []
-    for unit, kt in sorted(UNIT_SUF_TABLE.items(), key=sort_key, reverse=True):
-        secs, suf = kt
-        q = sec // secs
-        if q:
-            if q <= 1:
-                suf = ''
-            timespec.append('%02.d %s%s' % (q, unit, suf))
-        sec = sec % secs
-    return ', '.join(timespec)
-
+UNIT_TABLE = (
+    (('weeks', 'wks', 'w'), 60 * 60 * 24 * 7),
+    (('days', 'dys', 'd'), 60 * 60 * 24),
+    (('hours', 'hrs', 'h'), 60 * 60),
+    (('minutes', 'mins', 'm'), 60),
+    (('seconds', 'secs', 's'), 1),
+)
 
 DEFAULTS = {
     'ENABLED'     : False,
     'ARTIST_ROLE' : 'artist',
-    'EXPIRATION'  : _parse_time(DEFAULT_EXPIRATION),
+    'EXPIRATION'  : 60 * 60 * 24 * 2,  # 2 days
     'PIN_EMOTES'  : ['\N{ARTIST PALETTE}', '\N{PUSHPIN}'],
     'PRIV_ONLY'   : False
 }
+
 RM_EMOTES = ['❌']
 
 # Analytics core
@@ -100,10 +68,74 @@ FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".re
 # End analytics core
 
 
+# Exceptions
 class CleanupError(Exception):
     def __init__(self, channel, orig):
         self.channel = channel
         self.original = orig
+
+
+class BadTimeExpr(ValueError):
+    pass
+
+
+def _find_unit(unit):
+    for names, length in UNIT_TABLE:
+        if any(n.startswith(unit) for n in names):
+            return names, length
+    raise BadTimeExpr("Invalid unit: %s" % unit)
+
+
+def _parse_time(time):
+    time = time.lower()
+    if not time.isdigit():
+        time = re.split(r'\s*([\d.]+\s*[^\d\s,;]*)(?:[,;\s]|and)*', time)
+        time = sum(map(_timespec_sec, filter(None, time)))
+    return int(time)
+
+
+def _timespec_sec(expr):
+    atoms = re.split(r'([\d.]+)\s*([^\d\s]*)', expr)
+    atoms = list(filter(None, atoms))
+
+    if len(atoms) > 2:  # This shouldn't ever happen
+        raise BadTimeExpr("invalid expression: '%s'" % expr)
+    elif len(atoms) == 2:
+        names, length = _find_unit(atoms[1])
+        if atoms[0].count('.') > 1 or \
+                not atoms[0].replace('.', '').isdigit():
+            raise BadTimeExpr("Not a number: '%s'" % atoms[0])
+    else:
+        names, length = _find_unit('seconds')
+
+    return float(atoms[0]) * length
+
+
+def _generate_timespec(sec, short=False, micro=False):
+    timespec = []
+
+    for names, length in UNIT_TABLE:
+        n, sec = divmod(sec, length)
+
+        if n:
+            if micro:
+                s = '%d%s' % (n, names[2])
+            elif short:
+                s = '%d%s' % (n, names[1])
+            else:
+                s = '%d %s' % (n, names[0])
+            if n <= 1:
+                s = s.rstrip('s')
+            timespec.append(s)
+
+    if len(timespec) > 1:
+        if micro:
+            return ''.join(timespec)
+
+        segments = timespec[:-1], timespec[-1:]
+        return ' and '.join(', '.join(x) for x in segments)
+
+    return timespec[0]
 
 
 class Gallery:
@@ -209,7 +241,8 @@ class Gallery:
                     if not channel:
                         logger.warning('Attempted to curate missing channel '
                                        'ID #%s, disabling.' % cid)
-                        self.update_setting(channel, 'ENABLED', False)
+                        d['ENABLED'] = False
+                        self.save()
                         continue
                     tasks.append(self.cleanup_task(channel))
 
@@ -280,7 +313,7 @@ class Gallery:
             await self.bot.say('Privileged-only posts %s.' % adj)
 
     @galset.command(pass_context=True, allow_dm=False)
-    async def age(self, ctx, timespec: str = None):
+    async def age(self, ctx, *, timespec: str = None):
         """Set the maximum age of non-art posts"""
         channel = ctx.message.channel
         if not timespec:
@@ -288,9 +321,15 @@ class Gallery:
             await self.bot.say('Current maximum age is %s.'
                                % _generate_timespec(sec))
         else:
-            sec = _parse_time(timespec)
+            try:
+                sec = _parse_time(timespec)
+            except BadTimeExpr as e:
+                await self.bot.say(error(e.args[0]))
+                return
+
             self.update_setting(channel, 'EXPIRATION', sec)
-            await self.bot.say('Maximum post age set.')
+            await self.bot.say('Maximum post age set to %s.' %
+                               _generate_timespec(sec))
 
     @galset.command(pass_context=True, allow_dm=False)
     async def role(self, ctx, role: discord.Role = None):
