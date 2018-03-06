@@ -22,6 +22,7 @@ If my cogs have made your life easier, consider donating through [paypal](https:
 * punish: Zero-configuration timed mute with evasion protection.
 * purgepins: Delete pin notification messages after a per-channel interval. 
 * recensor: Create inclusive or exclusive regex filters per channel or server.
+* scheduler: Squid's [scheduler cog](https://github.com/tekulvw/Squid-Plugins/blob/master/scheduler/scheduler.py), with enhancements.
 * serverquotes: Store and recall memorable quotes for your server.
 * sinfo: Simple text dump of server and channel information.
 * watchdog: Helps systemd restart your bot if it goes offline. See below.

@@ -1,0 +1,9 @@
+{
+    "AUTHOR" : "Will/tekulvw and GrumpiestVulcan",
+    "DESCRIPTION" : "Schedule commands to run once, or on repeat, with an adjustable start time and/or optional end command.",
+    "DISABLED" : false,
+    "SHORT" : "Schedule commands to run.",
+    "NAME" : "Scheduler",
+    "TAGS" : ["schedule", "scheduler", "tools", "utility", "timed", "timer", "time"],
+    "INSTALL_MSG" : "Installed! Keep in mind that this version of scheduler is based on the original in Squid-plugins, and is a drop-in replacement for same.\n\nIf you have questions or need support, please ask in my Red Cog support server channel, #support_calebj. Invite: https://discord.gg/2DacSZ7."
+}
