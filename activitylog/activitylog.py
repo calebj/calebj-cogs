@@ -40,7 +40,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.4.0'
+__version__ = '1.5.0'
 
 TIMESTAMP_FORMAT = '%Y-%m-%d %X'  # YYYY-MM-DD HH:MM:SS
 PATH_LIST = ['data', 'activitylogger']
@@ -143,7 +143,7 @@ class ActivityLogger(object):
             msg = await self.bot.edit_message(msg, new_content=content, embed=embed)
         except discord.errors.NotFound:
             msg = await self.bot.send_message(msg.channel, content=content, embed=embed)
-        except:
+        except Exception:
             raise
         return msg
 
@@ -310,6 +310,61 @@ class ActivityLogger(object):
 
         self.fetch_handle = self.bot.loop.create_task(task)
 
+    @logfetch.command(pass_context=True, name='remote-channel')
+    async def fetch_rchannel(self, ctx, subfolder: str, channel_id: str, attachments: bool = None):
+        "Fetch complete logs for any channel the bot can see."
+
+        msg = await self.bot.say('Dispatching fetch task...')
+        start = datetime.now()
+
+        cookie = FetchCookie(ctx, start, msg)
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            await self.bot.say('Could not find that server.')
+            return
+        elif not channel.permissions_for(channel.server.me).read_message_history:
+            await self.bot.say('Missing the "read message history" permission '
+                               'in that channel.')
+            return
+
+        callback = partial(self.fetch_callback, cookie)
+        task = self.fetch_task([channel], subfolder, attachments=attachments,
+                               status_cb=callback)
+
+        self.fetch_handle = self.bot.loop.create_task(task)
+
+    @logfetch.command(pass_context=True, name='remote-server')
+    async def fetch_rserver(self, ctx, subfolder: str, server_id: str, attachments: bool = None):
+        """Fetch complete logs for another server.
+
+        Respects current logging settings such as attachments and channels.
+        Note that server events such as join/leave, ban etc can't be retrieved.
+        """
+
+        server = self.bot.get_server(server_id)
+        if not server:
+            await self.bot.say('Could not find that server.')
+            return
+
+        def check(channel):
+            if channel.type is not discord.ChannelType.text:
+                return False
+            return channel.permissions_for(server.me).read_message_history
+
+        channels = [c for c in server.channels if check(c)]
+
+        msg = await self.bot.say('Dispatching fetch task...')
+        start = datetime.now()
+
+        cookie = FetchCookie(ctx, start, msg)
+
+        callback = partial(self.fetch_callback, cookie)
+        task = self.fetch_task(channels, subfolder, attachments=attachments,
+                               status_cb=callback)
+
+        self.fetch_handle = self.bot.loop.create_task(task)
+
     @commands.group(pass_context=True)
     @checks.is_owner()
     async def logset(self, ctx):
@@ -442,6 +497,26 @@ class ActivityLogger(object):
                 flags.append(f)
         return flags
 
+    @staticmethod
+    def format_overwrite(target, channel, before, after):
+
+        target_str = 'Channel overwrites: {0.name} ({0.id}): '.format(channel)
+        target_str += 'role' if isinstance(target, discord.Role) else 'member'
+        target_str += ' {0.name} ({0.id})'.format(target)
+
+        if before:
+            bpair = [x.value for x in before.pair()]
+        if after:
+            apair = [x.value for x in after.pair()]
+
+        if before and after:
+            fmt = ' updated to values %i, %i (was %i, %i)'
+            return target_str + fmt % tuple(apair + bpair)
+        elif after:
+            return target_str + ' added with values %i, %i' % tuple(apair)
+        elif before:
+            return target_str + ' removed (was %i, %i)' % tuple(bpair)
+
     def gethandle(self, path, mode='a'):
         """Manages logfile handles, culling stale ones and creating folders"""
         if path in self.handles:
@@ -450,7 +525,7 @@ class ActivityLogger(object):
             else:  # file was deleted?
                 try:  # try to close, no guarantees tho
                     self.handles[path].close()
-                except:
+                except Exception:
                     pass
                 del self.handles[path]
                 return self.gethandle(path, mode)
@@ -468,7 +543,7 @@ class ActivityLogger(object):
                 if not os.path.exists(dirname):
                     os.makedirs(dirname)
                 handle = LogHandle(path, mode=mode)
-            except:
+            except Exception:
                 raise
 
             self.handles[path] = handle
@@ -640,6 +715,9 @@ class ActivityLogger(object):
         await self.log(role.server, entry)
 
     async def on_server_role_update(self, before, after):
+        if not self.should_log(before.server):
+            return
+
         entries = []
         if before.name != after.name:
             entries.append("Role renamed: '%s' to '%s'" %
@@ -684,6 +762,9 @@ class ActivityLogger(object):
         await self.log(server, entry)
 
     async def on_member_update(self, before, after):
+        if not self.should_log(before.server):
+            return
+
         entries = []
         if before.nick != after.nick:
             entries.append("Member nickname: '@{0}' (id {0.id}) changed nickname "
@@ -718,17 +799,42 @@ class ActivityLogger(object):
     async def on_channel_update(self, before, after):
         if type(before) is discord.PrivateChannel:
             return
+        elif not self.should_log(before.server):
+            return
+
         entries = []
+
         if before.name != after.name:
             entries.append('Channel rename: %s renamed to %s' %
                            (before, after))
+
         if before.topic != after.topic:
             entries.append('Channel topic: %s topic was set to "%s"' %
                            (before, after.topic))
+
         if before.position != after.position:
             entries.append('Channel position: {0.name} moved from {0.position} '
                            'to {1.position}'.format(before, after))
-        # TODO: channel permissions overrides
+
+        before_overwrites = dict(before.overwrites)
+        after_overwrites = dict(after.overwrites)
+        before_overwrite_set = set(before_overwrites)
+        after_overwrite_set = set(after_overwrites)
+
+        for old_ow in before_overwrite_set - after_overwrite_set:
+            entries.append(self.format_overwrite(old_ow, before, before_overwrites[old_ow], None))
+
+        for new_ow in after_overwrite_set - before_overwrite_set:
+            entries.append(self.format_overwrite(new_ow, before, None, after_overwrites[new_ow]))
+
+        for isect_ow in after_overwrite_set & before_overwrite_set:
+            if before_overwrites[isect_ow].pair() == after_overwrites[isect_ow].pair():
+                continue
+
+            entries.append(self.format_overwrite(isect_ow, before,
+                                                 before_overwrites[isect_ow],
+                                                 after_overwrites[isect_ow]))
+
         for e in entries:
             await self.log(before.server, e)
 
@@ -737,6 +843,9 @@ class ActivityLogger(object):
             self.analytics.command(ctx)
 
     async def on_voice_state_update(self, before, after):
+        if not self.should_log(before.server):
+            return
+
         if before.voice_channel != after.voice_channel:
             if before.voice_channel:
                 msg = "Voice channel leave: {0} (id {0.id})"
