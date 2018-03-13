@@ -8,7 +8,7 @@ import os
 import time
 import re
 
-__version__ = '1.7.0'
+__version__ = '1.8.0'
 
 try:
     from tabulate import tabulate
@@ -147,7 +147,9 @@ class Punish:
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def cpunish(self, ctx, user: discord.Member, duration: str=None, *, reason: str=None):
-        """Same as punish but cleans up after itself and the target"""
+        """
+        Same as punish, but cleans up the target's last message
+        """
 
         success = await self._punish_cmd_common(ctx, user, duration, reason, quiet=True)
 
@@ -165,34 +167,39 @@ class Punish:
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def punish(self, ctx, user: discord.Member, duration: str=None, *, reason: str=None):
-        """Puts a user into timeout for a specified time period, with an optional reason.
-        Time specification is any combination of number with the units s,m,h,d.
-        Example: !punish @idiot 1.1h10m Enough bitching already!"""
+        """
+        Puts a user into timeout for a specified time, with optional reason.
+
+        Time specification is any combination of number with the units s,m,h,d,w.
+        Example: !punish @idiot 1.1h10m Enough bitching already!
+        """
 
         await self._punish_cmd_common(ctx, user, duration, reason)
 
     @commands.command(pass_context=True, no_pm=True, name='lspunish')
     @checks.mod_or_permissions(manage_messages=True)
     async def list_punished(self, ctx):
-        """Shows a table of punished users with time, mod and reason.
+        """
+        Shows a table of punished users with time, mod and reason.
 
         Displays punished users, time remaining, responsible moderator and
-        the reason for punishment, if any."""
+        the reason for punishment, if any.
+        """
+
         server = ctx.message.server
         server_id = server.id
+
         if not (server_id in self.json and self.json[server_id]):
             await self.bot.say("No users are currently punished.")
             return
 
         def getmname(mid):
             member = discord.utils.get(server.members, id=mid)
+
             if member:
-                if member.nick:
-                    return '%s (%s)' % (member.nick, member)
-                else:
-                    return str(member)
+                return str(member)
             else:
-                return '(member not present, id #%d)'
+                return '(absent user #%d)' % mid
 
         headers = ['Member', 'Remaining', 'Punished by', 'Reason']
         table = []
@@ -210,32 +217,77 @@ class Punish:
             table.append((sort, member_name, t, punisher_name, reason))
 
         for _, name, rem, mod, reason in sorted(table, key=lambda x: x[0]):
-            remaining = _generate_timespec(rem - now) if rem else 'forever'
+            if rem:
+                remaining = _generate_timespec(rem - now, short=True)
+            else:
+                remaining = 'forever'
+
             if not reason:
                 reason = 'n/a'
+
             disp_table.append((name, remaining, mod, reason))
 
         for page in pagify(tabulate(disp_table, headers)):
             await self.bot.say(box(page))
 
+    @commands.command(pass_context=True, no_pm=True, name='punish-clean')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def clean_punished(self, ctx, clean_pending: bool = False):
+        """
+        Removes absent members from the punished list.
+
+        If run without an argument, it only removes members who are no longer
+        present but whose timer has expired. If the argument is 'yes', 1,
+        or another trueish value, it will also remove absent members whose
+        timers have yet to expire.
+
+        Use this option with care, as removing them will prevent the punished
+        role from being re-added if they rejoin before their timer expires.
+        """
+
+        count = 0
+        now = time.time()
+        server = ctx.message.server
+        data = self.json.get(server.id, [])
+
+        for mid, data in data.copy().items():
+            if not mid.isdigit() or server.get_member(mid):
+                continue
+
+            elif clean_pending or ((data['until'] or 0) < now):
+                del(data[mid])
+                count += 1
+
+        await self.bot.say('Cleaned %i absent members from the list.' % count)
+
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def pwarn(self, ctx, user: discord.Member, *, reason: str=None):
-        """Warns a user with boilerplate about the rules."""
+        """
+        Warns a user with boilerplate about the rules
+        """
+
         msg = ['Hey %s, ' % user.mention]
         msg.append("you're doing something that might get you muted if you keep "
                    "doing it.")
         if reason:
             msg.append(" Specifically, %s." % reason)
+
         msg.append("Be sure to review the server rules.")
         await self.bot.say(' '.join(msg))
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def unpunish(self, ctx, user: discord.Member):
-        """Removes punishment from a user. Same as removing the role directly"""
+        """
+        Removes punishment from a user
+
+        This is the same as removing the role directly.
+        """
+
         role = await self.get_role(user.server)
         sid = user.server.id
+
         if role and role in user.roles:
             reason = 'Punishment manually ended early by %s. ' % ctx.message.author
             if self.json[sid][user.id]['reason']:
@@ -250,6 +302,9 @@ class Punish:
     @commands.command(pass_context=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def fixpunish(self, ctx):
+        """
+        Reconfigures the punish role and channel overwrites
+        """
         server = ctx.message.server
         default_name = DEFAULT_ROLE_NAME
         role_id = self.json.get(server.id, {}).get('ROLE_ID')
@@ -332,8 +387,10 @@ class Punish:
                     await self.bot.edit_message(msgobj, msgobj.content + 'done.')
 
         if role and role.id != role_id:
+
             if server.id not in self.json:
                 self.json[server.id] = {}
+
             self.json[server.id]['ROLE_ID'] = role.id
             self.save()
 
@@ -447,12 +504,17 @@ class Punish:
             self.json[server.id] = {}
 
         self.json[server.id][member.id] = {
-            'until': (time.time() + duration) if duration else None,
-            'by': ctx.message.author.id,
-            'reason': reason
+            'until'  : (time.time() + duration) if duration else None,
+            'by'     : ctx.message.author.id,
+            'reason' : reason,
+            'unmute' : not member.voice.mute
         }
 
         await self.bot.add_roles(member, role)
+
+        if member.voice_channel:
+            await self.bot.server_voice_state(member, mute=True)
+
         self.save()
 
         # schedule callback for role removal
@@ -483,13 +545,31 @@ class Punish:
 
     async def _unpunish(self, member, reason=None):
         """Remove punish role, delete record and task handle"""
+
         role = await self.get_role(member.server)
+
         if role:
-            # Has to be done first to prevent triggering on_member_update listener
+            data = self.json.get(member.server.id, {})
+            member_data = data.get(member.id, {})
+
+            # Has to be done first to prevent triggering listeners
             self._unpunish_data(member)
+
             await self.bot.remove_roles(member, role)
 
+            if member_data.get('unmute', False):
+                if member.voice_channel:
+                    await self.bot.server_voice_state(member, mute=False)
+
+                else:
+                    if 'PENDING_UNMUTE' not in data:
+                        data['PENDING_UNMUTE'] = []
+
+                    data['PENDING_UNMUTE'].append(member.id)
+                    self.save()
+
             msg = 'Your punishment in %s has ended.' % member.server.name
+
             if reason:
                 msg += "\nReason was: %s" % reason
 
@@ -498,7 +578,7 @@ class Punish:
     def _unpunish_data(self, member):
         """Removes punish data entry and cancels any present callback"""
         sid = member.server.id
-        if sid in self.json and member.id in self.json[sid]:
+        if member.id in self.json.get(sid, {}):
             del(self.json[member.server.id][member.id])
             self.save()
 
@@ -522,46 +602,67 @@ class Punish:
     async def on_member_update(self, before, after):
         """Remove scheduled unpunish when manually removed"""
         sid = before.server.id
+        data = self.json.get(sid, {})
+        member_data = data.get(before.id)
 
-        if not (sid in self.json and before.id in self.json[sid]):
+        if member_data is None:
             return
 
         role = await self.get_role(before.server)
         if role and role in before.roles and role not in after.roles:
             msg = 'Your punishment in %s was ended early by a moderator/admin.' % before.server.name
-            if self.json[sid][before.id]['reason']:
-                msg += '\nReason was: ' + self.json[sid][before.id]['reason']
+            if member_data['reason']:
+                msg += '\nReason was: ' + member_data['reason']
+
+            self._unpunish_data(after)
+
+            if member_data.get('unmute', False):
+                if before.voice_channel:
+                    await self.bot.server_voice_state(before, mute=False)
+
+                else:
+                    if 'PENDING_UNMUTE' not in data:
+                        data['PENDING_UNMUTE'] = []
+
+                    data['PENDING_UNMUTE'].append(before.id)
+                    self.save()
 
             await self.bot.send_message(after, msg)
-            self._unpunish_data(after)
 
     async def on_member_join(self, member):
         """Restore punishment if punished user leaves/rejoins"""
         sid = member.server.id
         role = await self.get_role(member.server)
-        if not role or not (sid in self.json and member.id in self.json[sid]):
+        data = self.json.get(sid, {}).get(member.id)
+        if not role or data is None:
             return
 
-        duration = self.json[sid][member.id]['until'] - time.time()
+        duration = data['until'] - time.time()
         if duration > 0:
             await self.bot.add_roles(member, role)
 
             reason = 'Punishment re-added on rejoin. '
-            if self.json[sid][member.id]['reason']:
-                reason += self.json[sid][member.id]['reason']
+            if data['reason']:
+                reason += data['reason']
 
             if member.id not in self.handles[sid]:
                 self.schedule_unpunish(duration, member, reason)
 
-    async def on_server_role_update(self, before, after):
-        server = before.server
-        role = await self.get_role(server)
-        if not (after and role) or after.id != role.id:
+    async def on_voice_state_update(self, before, after):
+        data = self.json.get(before.server.id, {})
+        member_data = data.get(before.id, {})
+        unmute_list = data.get('PENDING_UNMUTE', [])
+
+        if not after.voice_channel:
             return
-        if after.position != (server.me.top_role.position - 1):
-            if after < server.me.top_role:
-                await self.bot.move_role(server, after,
-                                         server.me.top_role.position - 1)
+
+        if member_data and not after.voice.mute:
+            await self.bot.server_voice_state(after, mute=True)
+
+        elif before.id in unmute_list:
+            await self.bot.server_voice_state(after, mute=False)
+            unmute_list.remove(before.id)
+            self.save()
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
@@ -575,11 +676,13 @@ def compat_load(path):
             if not user.isdigit():
                 continue
 
-            by = pdata.pop('givenby', None)  # able to read Kownlin json
+            # read Kownlin json
+            by = pdata.pop('givenby', None)
             by = by if by else pdata.pop('by', None)
             pdata['by'] = by
             pdata['until'] = pdata.pop('until', None)
             pdata['reason'] = pdata.pop('reason', None)
+
     return data
 
 
