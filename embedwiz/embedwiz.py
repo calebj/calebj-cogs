@@ -15,7 +15,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 # Analytics core
 import zlib, base64
@@ -94,7 +94,6 @@ class EmbedWizard:
             self.bot.logger.exception(error)
             self.analytics = None
 
-    @checks.mod_or_permissions(manage_messages=True)
     @commands.group(pass_context=True, no_pm=True, invoke_without_command=True)
     async def embedwiz(self, ctx, *, specification):
         """Posts an embed according to the given specification:
@@ -117,6 +116,7 @@ class EmbedWizard:
             if embed:
                 await self.bot.say(embed=embed)
 
+    @checks.mod_or_permissions(manage_messages=True)
     @embedwiz.command(name='channel', pass_context=True, no_pm=True)
     async def embed_channel(self, ctx, channel: discord.Channel, *, specification):
         """Posts an embed in another channel according to the spec.
@@ -133,6 +133,7 @@ class EmbedWizard:
         if embed:
             await self.bot.send_message(channel, embed=embed)
 
+    @checks.mod_or_permissions(manage_messages=True)
     @embedwiz.command(name='delete', pass_context=True, no_pm=True)
     async def embed_del(self, ctx, *, specification):
         """Posts an embed according to the spec after deleting the original message.
