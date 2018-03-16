@@ -14,7 +14,7 @@ from random import randint
 from math import ceil
 from collections import defaultdict
 
-__version__ = '2.0.0'
+__version__ = '2.0.1'
 
 log = logging.getLogger("red.scheduler")
 log.setLevel(logging.INFO)
@@ -402,8 +402,8 @@ class Scheduler:
         await self.bot.say(msg)
 
     @scheduler.command(pass_context=True, name="remove")
-    async def _scheduler_remove(self, ctx, name):
-        """Removes a scheduled repeating command."""
+    async def _scheduler_remove(self, ctx, *, name):
+        """Removes a scheduled repeating command by name."""
         server = ctx.message.server
         name = name.lower()
 
@@ -417,10 +417,10 @@ class Scheduler:
         await self.bot.say('"{}" has successfully been removed.'.format(name))
 
     @scheduler.command(pass_context=True, name="cancel")
-    async def _scheduler_cancel(self, ctx, name):
+    async def _scheduler_cancel(self, ctx, *, command):
         """Cancels a scheduled oneshot (non-repeating) command."""
         server = ctx.message.server
-        fname = ctx.message.author.id + '-' + name.lower()
+        fname = ctx.message.author.id + '-' + command.lower()
 
         event = self.events.get(server.id, {}).pop(fname, None)
         cancelled = await self._remove_event(fname, server)
@@ -429,9 +429,9 @@ class Scheduler:
             self.save_events()
 
         if event or cancelled:
-            await self.bot.say('"{}" has been successfully cancelled.'.format(name))
+            await self.bot.say('"{}" has been successfully cancelled.'.format(command))
         else:
-            await self.bot.say('Cannot find a scheduled run of "{}".'.format(name))
+            await self.bot.say('Cannot find a scheduled run of "{}".'.format(command))
 
     @scheduler.command(pass_context=True, name="list")
     @checks.mod_or_permissions(manage_messages=True)
