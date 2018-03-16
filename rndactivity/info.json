@@ -1,0 +1,7 @@
+{
+    "AUTHOR" : "Twentysix and GrumpiestVulcan (@calebj#0001)",
+    "DESCRIPTION" : "Cycles through custom bot statuses/activities every X seconds, with optional time variance.\nLimited to owner.\nSee [p]help RandomActivity for details.",
+    "SHORT" : "Cycles custom activities (aka game/status)",
+    "TAGS" : ["game", "status", "activity", "random", "watching", "listening", "playing", "streaming"],
+    "NAME" : "RandomActivity"
+}
