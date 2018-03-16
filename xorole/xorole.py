@@ -420,7 +420,7 @@ class XORole:
     @checks.mod_or_permissions(administrator=True)
     @xoroleset.command(name='audit', pass_context=True)
     async def xoroleset_audit(self, ctx):
-        "Shows members with than one role in a xorole roleset"
+        "Shows members with more than one role in a xorole roleset"
         lines = []
         server = ctx.message.server
         try:

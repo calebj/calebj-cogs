@@ -1,8 +1,8 @@
 {
     "AUTHOR" : "CalebJ",
-    "INSTALL_MSG" : "Done.",
+    "INSTALL_MSG" : "Done. Documentation on how to use recensor can be found here: <https://github.com/calebj/calebj-cogs#how-do-i-use-recensor>",
     "NAME" : "RECensor",
     "SHORT" : "Uses regular expressions to auto-delete messages.",
-    "DESCRIPTION" : "Uses regular expressions to filter messages to delete, whether matching or non-matching.",
+    "DESCRIPTION" : "Uses regular expressions to filter messages matching or not matching a given pattern.",
     "TAGS" : ["recensor", "moderation", "regex", "censor", "filter"]
 }

@@ -1,6 +1,6 @@
 {
     "AUTHOR" : "Caleb Johnson <me@calebj.io> (calebj#0001)",
-    "INSTALL_MSG" : "Done. This cog was sponsored by Aeternum#7967 (<@!173291729192091649>).",
+    "INSTALL_MSG" : "Done. This cog was sponsored by Aeternum#7967 (<@!173291729192091649>).\n\nDocumentation on how to use embedwiz can be found here: <https://github.com/calebj/calebj-cogs#how-do-i-use-embedwiz>",
     "NAME" : "Embed Wizard",
     "SHORT" : "Generate embeds with a command.",
     "DESCRIPTION" : "Generate embeds with a command, with subcommands to post in another channel or delete the command message.",
