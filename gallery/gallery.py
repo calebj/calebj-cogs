@@ -258,6 +258,7 @@ class Gallery:
             pass
 
     @commands.group(pass_context=True, allow_dm=False)
+    @checks.mod_or_permissions(manage_messages=True)
     async def galset(self, ctx):
         """Gallery module settings"""
         if ctx.invoked_subcommand is None:
