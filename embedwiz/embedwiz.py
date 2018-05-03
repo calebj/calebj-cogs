@@ -15,7 +15,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.2.0'
+__version__ = '1.3.1'
 
 # Analytics core
 import zlib, base64
@@ -109,7 +109,10 @@ class EmbedWizard:
 
         Body text can be "prompt" to use your next message as the content.
 
-        WARNING: embeds are hidden to anyone with the 'link previews' setting off.
+        Start the specification with -noauthor to skip the author header.
+        Note: only mods, admins and the bot owner can edit anonymous embeds.
+
+        WARNING: embeds are hidden to anyone with 'link previews' disabled.
         """
         if ctx.invoked_subcommand is None:
             embed = await self._parse_embed(ctx, specification)
@@ -155,8 +158,63 @@ class EmbedWizard:
             for msg in [ctx.message, *to_delete]:
                 await self.bot.delete_message(msg)
 
+    @embedwiz.command(name='edit', pass_context=True, no_pm=True)
+    async def embed_edit(self, ctx, channel: discord.Channel, message_id: int, *, specification):
+        """Edits an existing embed according to the spec.
+
+        See [p]help embedwiz for more information.
+        """
+
+        try:
+            msg = await self.bot.get_message(channel, str(message_id))
+        except discord.errors.NotFound:
+            await self.bot.say(error('Message not found.'))
+            return
+        except discord.errors.Forbidden:
+            await self.bot.say(error('No permissions to read that channel.'))
+            return
+
+        if msg.author.id != self.bot.user.id:
+            await self.bot.say(error("That message isn't mine."))
+            return
+        elif not msg.embeds:
+            await self.bot.say(error("That message doesn't have an embed."))
+            return
+
+        old_embed = msg.embeds[0]
+
+        user = ctx.message.author
+        server = ctx.message.server
+        admin_role = self.bot.settings.get_server_admin(server)
+        mod_role = self.bot.settings.get_server_mod(server)
+
+        override = (user.id == self.bot.settings.owner) or \
+                   discord.utils.get(user.roles, name=admin_role) or \
+                   discord.utils.get(user.roles, name=mod_role)
+
+        if override:
+            pass
+        elif 'author' not in old_embed or 'name' not in old_embed['author']:
+            await self.bot.say(error("That embed doesn't have an author "
+                                     "set, and you aren't a mod or admin."))
+            return
+        elif old_embed['author']['name'].split('(')[-1][:-1] != user.id:
+            await self.bot.say(error("That embed isn't yours."))
+            return
+
+        new_embed = await self._parse_embed(ctx, specification)
+        await self.bot.edit_message(msg, embed=new_embed)
+        await self.bot.say('Embed edited successfully.')
+
     async def _parse_embed(self, ctx, specification, return_todelete=False):
         to_delete = []
+        author = ctx.message.author
+        specification = specification.strip()
+
+        set_author = True
+        if specification.startswith('-noauthor '):
+            set_author = False
+            specification = specification[10:]
 
         split = specification.split(';', 7)
         nfields = len(split)
@@ -218,7 +276,7 @@ class EmbedWizard:
                                      ' minute.')
             to_delete.append(msg)
 
-            msg = await self.bot.wait_for_message(author=ctx.message.author,
+            msg = await self.bot.wait_for_message(author=author,
                                                   channel=ctx.message.channel,
                                                   timeout=60)
             if msg is None:
@@ -235,6 +293,10 @@ class EmbedWizard:
 
         embed = Embed(title=title, color=color, description=body, url=title_url)
 
+        if set_author:
+            embed.set_author(name='%s (%s)' % (author.display_name, author.id),
+                             icon_url=author.avatar_url or discord.Embed.Empty)
+
         if image:
             embed.set_image(url=image)
         if ftext or fimage:
@@ -244,6 +306,7 @@ class EmbedWizard:
 
         if return_todelete:
             return embed, to_delete
+
         return embed
 
     async def on_command(self, command, ctx):
