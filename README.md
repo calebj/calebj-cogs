@@ -103,6 +103,8 @@ To build an embed, specify the following parameters seperated by a semicolon (`;
 
 All fields can be left blank. If Discord doesn't like a title link or image URL, it may throw an error.
 
+By default, author information is included in the embed's header so that it can be edited later using the `embedwiz edit` command. To omit this information, put `-noauthor` in front of the between the command and its parameters. Keep in mind that you won't be able to edit it later if you do this.
+
 An example embed specification:
 ```
 [p]embedwiz [Test Embed](https://github.com/calebj/calebj-cogs/);
@@ -126,6 +128,7 @@ Which looks like this:
 Only mods and those with the manage_messages permission can use these subcommands:
 * `embedwiz channel [channel] [embed_spec ...]` : posts the embed in the channel `channel` instead.
 * `embedwiz delete [embed_spec ...]` : deletes the command message (and prompt message, if used).
+* `embedwiz edit [channel] [message_id] [embed_spec ...]` : edits **any** existing embed.
 
 ### How do I use recensor?
 The recensor cog uses Python's [`re.match()`](https://docs.python.org/3/library/re.html#re.match) to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is [here](https://docs.python.org/3/library/re.html#regular-expression-syntax). Unlike [`re.search()`](https://docs.python.org/3/library/re.html#re.search), the pattern matching is anchored to the beginning of the message text. If you want a pattern to match anywhere in the message, you must put `.*` at the beginning of the pattern.
