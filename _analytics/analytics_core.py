@@ -1,4 +1,9 @@
-import string, random, asyncio, aiohttp, platform, collections, sys, os
+import asyncio
+import aiohttp
+import platform
+import sys
+import os
+from collections import deque
 from cogs.utils.dataIO import dataIO
 from cogs.utils import checks
 from discord.ext import commands
@@ -7,7 +12,7 @@ from base64 import b64encode
 
 
 class GVAnalytics:
-    __version__ = 1.33
+    __version__ = 1.34
     STATS_URL = 'https://stats.calebj.io/piwik.php'
     BASE_URL = 'https://red.calebj.io/'
     PATH = 'data/lib_calebj/'
@@ -33,7 +38,7 @@ class GVAnalytics:
         self.bot = bot
         self.terminate = False
         self.params_base = {}
-        self.queue = collections.deque(e, maxlen=512)
+        self.queue = deque(e, maxlen=512)
         self.gvanalytics.help = 'Enable or disable analytics for calebj cogs\n\n' + self.Q2
 
         self.data = {}
@@ -51,17 +56,16 @@ class GVAnalytics:
     @classmethod
     def replace(cls, oldcog):
         if cls.__version__ > oldcog.__version__:
-            cog = cls(oldcog.bot, oldcog.queue)
+            if oldcog.__version__ > 1.32:
+                cog = cls(oldcog.bot, oldcog.queue)
+            else:
+                cog = cls(oldcog.b, oldcog.q)
             cog.bot.remove_cog(oldcog.__class__.__name__)
             cog.bot.add_cog(cog)
             return cog
 
     def upgrade(self, newcls):
-        if newcls.__version__ > self.__version__:
-            cog = newcls(self.bot, self.queue)
-            cog.bot.remove_cog(self.__class__.__name__)
-            cog.bot.add_cog(cog)
-            return cog
+        return newcls.replace(self)
 
     def __unload(self):
         self.terminate = True
@@ -112,7 +116,7 @@ class GVAnalytics:
             await self.bot.send_message(owner, reply)
             self.save()
             return a
-        except:
+        except Exception:
             return None
 
     async def _start(self):
@@ -205,9 +209,6 @@ class AnalyticsInterface:
         self.version = None
         self.project = None
 
-        rc = string.ascii_letters + string.digits
-        #self.load_id = ''.join(random.choice(rc) for _ in range(6))
-
     def send_action(self, cat, res=None, act=None, value=None, uid=None, name_first=False):
         core = self._get_core()
         if core:
@@ -238,4 +239,4 @@ class CogAnalytics(AnalyticsInterface):
     def command(self, ctx, value=None):
         uid = ctx.message.author.id
         self.send_action('command', self.project, ctx.command.qualified_name,
-                          value, uid=uid)
+                         value, uid=uid)
