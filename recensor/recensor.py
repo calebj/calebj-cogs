@@ -1,22 +1,35 @@
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import discord
 from discord.ext import commands
-import os
+from enum import Enum
 import logging
-from cogs.utils.dataIO import dataIO
-from .utils import checks
+import os
 import re
+import tabulate
+
+
+from .utils.dataIO import dataIO
+from .utils import checks
 
 # Some magic values
 ALL_CHANNELS = 'all'
-MODE_INCLUSIVE = 'incl'  # deletes all messages matching
-MODE_EXCLUSIVE = 'excl'  # delete all messages not matching
-MODE_DISABLED = 'none'   # pattern disabled
-MODES = [MODE_DISABLED, MODE_EXCLUSIVE, MODE_INCLUSIVE]
+
+
+class MODE(Enum):
+    INCLUSIVE = 'incl'  # deletes all messages matching
+    EXCLUSIVE = 'excl'  # delete all messages not matching
+    DISABLED  = 'none'  # pattern disabled
+
+
+MODES = [MODE.DISABLED, MODE.EXCLUSIVE, MODE.INCLUSIVE]
 
 log = logging.getLogger('red.recensor')
 
 DATA_PATH = "data/recensor/"
 JSON_PATH = DATA_PATH + "regexen.json"
+
+def check_match(regex, message):
+    return bool(regex.match(message))
 
 
 # Analytics core
@@ -50,7 +63,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.5.0'
+__version__ = '1.6.0'
 
 
 class ReCensor:
@@ -68,6 +81,8 @@ class ReCensor:
         self.bot = bot
         self.regexen = dataIO.load_json(JSON_PATH)
         self.recache = {}
+        self.executor = ProcessPoolExecutor()
+        self.unloading = False
 
         try:
             self.analytics = CogAnalytics(self)
@@ -76,6 +91,10 @@ class ReCensor:
             self.analytics = None
 
         bot.loop.create_task(self.compile_regexen())
+
+    def __unload(self):
+        self.unloading = True
+        dataIO.save_json(JSON_PATH, self.regexen)
 
     def _re_present(self, obj):
         """Determines if any patterns are set for a server or channel"""
@@ -112,7 +131,7 @@ class ReCensor:
             server = server.id
         if server in self.regexen:
             for c, relist in self.regexen[server].items():
-                if MODE_EXCLUSIVE in relist.values():
+                if MODE.EXCLUSIVE in relist.values():
                     clist.append(c)
         return clist
 
@@ -134,30 +153,36 @@ class ReCensor:
         """Lists regexes used to filter messages.
         Channel listing includes global patterns."""
         server = ctx.message.server
-        self.regexen = dataIO.load_json(JSON_PATH)
+
         if not self._re_present(server):
             await self.bot.say('There are no filter patterns set for this server.')
             return
+
         table = ' | '.join(['mode', 'pattern']) + '\n'  # header
+
         for c in self.regexen[server.id]:
             if c == ALL_CHANNELS and self._re_present(server):
                     table += '\nServer-wide:\n'
+
             elif (channel and channel.id == c) or not channel:
                 if channel:
                     ch_obj = channel
                 else:
                     ch_obj = self.bot.get_channel(c)
+
                 if ch_obj is None:
                     table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
+
                 if self._re_present(ch_obj):
                     table += '\n#' + ch_obj.name + '\n'
 
             for regex, mode in self.regexen[server.id][c].items():
                 table += ' | '.join([mode, regex]) + '\n'
+
         await self.bot.say('```py\n' + table + '```')
 
     @recensor.command(pass_context=True, name='add')
-    async def _add(self, ctx, pattern: str, mode: str=MODE_INCLUSIVE, channel: discord.Channel=None):
+    async def _add(self, ctx, pattern: str, mode: str=MODE.INCLUSIVE, channel: discord.Channel=None):
         """Adds a pattern to filter messages. Mods, bot admins, and the bot's
         owner are not subjected to the filter.
         If the pattern contains spaces, it must be put in double quotes. Single quotes will not work.
@@ -171,8 +196,6 @@ class ReCensor:
         the filter is used across the entire server."""
         server = ctx.message.server
 
-        # initialize
-        self.regexen = dataIO.load_json(JSON_PATH)
         if server.id not in self.regexen:
             self.regexen[server.id] = {}
 
@@ -183,16 +206,19 @@ class ReCensor:
         if mode not in MODES:
             await self.bot.say('"%s" is not a valid mode. You must specify one of `%s`.' % (mode, '`, `'.join(MODES)))
             return
-        if mode == MODE_EXCLUSIVE:
+        if mode == MODE.EXCLUSIVE:
             if ALL_CHANNELS in self._ls_excl(server):
                 await self.bot.say("There is already a server-wide exclusive filter. Remove or disable it first.")
                 return
+
             if channel and channel.id in self._ls_excl(server):
                 await self.bot.say("That channel already has an exclusive filter. Remove or disable it first.")
                 return
+
         cid = channel.id if channel else ALL_CHANNELS
         if cid not in self.regexen[server.id]:
             self.regexen[server.id][cid] = {}
+
         self.regexen[server.id][cid][pattern] = mode
         await self.bot.say('Pattern added.')
         dataIO.save_json(JSON_PATH, self.regexen)
@@ -201,14 +227,14 @@ class ReCensor:
     async def _set(self, ctx, mode: str, channel: discord.Channel=None):
         """Lists regexes used to filter messages"""
         server = ctx.message.server
-        self.regexen = dataIO.load_json(JSON_PATH)
+
         if not self._re_present(server):
             await self.bot.say('There are no patterns in the server to modify.')
             return
         if mode not in MODES:
             self.bot.reply('"%s" is not a valid mode. You must specify one of `%s`.') % (mode, '`, `'.join(MODES))
 
-        if mode == MODE_EXCLUSIVE:
+        if mode == MODE.EXCLUSIVE:
             if ALL_CHANNELS in self._ls_excl(server):
                 await self.bot.say("There is already a server-wide exclusive filter. Remove or disable it first.")
                 return
@@ -227,6 +253,7 @@ class ReCensor:
                     ch_obj = channel
                 else:
                     ch_obj = self.bot.get_channel(c)
+
                 if ch_obj is None:
                     table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
                 if self._re_present(ch_obj):
@@ -236,12 +263,14 @@ class ReCensor:
                 table += ' | '.join([str(i).ljust(4), oldmode, regex]) + '\n'
                 re_list[str(i)] = (server.id, c, regex, oldmode)
                 i += 1
+
         prompt = 'Choose the number of the pattern to set to `%s`:\n' % mode
         await self.bot.say(prompt + '```py\n' + table + '```')
 
         msg = await self.bot.wait_for_message(author=ctx.message.author, timeout=15)
         if msg is None:
-            return
+            await self.bot.say('Timed out waiting for a response.')
+
         msg = msg.content.strip()
         if msg in re_list:
             sid, cid, regex, _ = re_list[msg]
@@ -253,10 +282,11 @@ class ReCensor:
     async def _del(self, ctx, channel: discord.Channel=None):
         """Lists regexes used to filter messages"""
         server = ctx.message.server
-        self.regexen = dataIO.load_json(JSON_PATH)
+
         if not self._re_present(server):
             await self.bot.say('There are no filter patterns set for this server.')
             return
+
         re_list = {}
         i = 1
         table = ' | '.join(['#'.ljust(4), 'mode', 'pattern']) + '\n'  # header
@@ -268,8 +298,10 @@ class ReCensor:
                     ch_obj = channel
                 else:
                     ch_obj = self.bot.get_channel(c)
+
                 if ch_obj is None:
                     table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
+
                 if self._re_present(ch_obj):
                     table += '\n#' + ch_obj.name + '\n'
 
@@ -277,16 +309,43 @@ class ReCensor:
                 table += ' | '.join([str(i).ljust(4), mode, regex]) + '\n'
                 re_list[str(i)] = (server.id, c, regex)
                 i += 1
+
         prompt = 'Choose the number of the pattern to delete:\n'
         await self.bot.say(prompt + '```py\n' + table + '```')
         msg = await self.bot.wait_for_message(author=ctx.message.author, timeout=15)
         if msg is None:
-            return
+            await self.bot.say('Timed out waiting for a response.')
+
         msg = msg.content.strip()
         if msg in re_list:
             sid, cid, regex = re_list[msg]
             del(self.regexen[sid][cid][regex])
             await self.bot.say('Pattern removed.')
+
+        dataIO.save_json(JSON_PATH, self.regexen)
+
+    @recensor.command(pass_context=True, name='exemptions')
+    @checks.admin()
+    async def _exemptions(self, ctx, on_off: bool = None):
+        """Configure whether mods and admins are immune to the filter in the server (default yes)."""
+        sid = ctx.message.server.id
+        current = not self.regexen.get(sid, {}).get('no_exemptions', False)
+
+        if on_off is None:
+            adj = 'enabled' if current else 'disabled'
+            await self.bot.say('Exemptions are currently %s.' % adj)
+            return
+
+        adj = 'enabled' if on_off else 'disabled'
+        if on_off == current:
+            await self.bot.say('Exemptions were already %s.' % adj)
+        else:
+            if sid not in self.regexen:
+                self.regexen[sid] = {}
+
+            self.regexen[sid]['no_exemptions'] = not on_off
+            await self.bot.say('Exemptions %s.' % adj)
+
         dataIO.save_json(JSON_PATH, self.regexen)
 
     def immune_from_filter(self, message):
@@ -307,32 +366,41 @@ class ReCensor:
 
     async def on_message(self, message):
         # Fast checks
-        if message.channel.is_private or self.bot.user == message.author \
-         or not isinstance(message.author, discord.Member):
+        if message.channel.is_private or self.bot.user == message.author or self.unloading \
+                                      or not isinstance(message.author, discord.Member):
             return
 
         server = message.server
         sid = server.id
         can_delete = message.channel.permissions_for(server.me).manage_messages
 
-        # Owner, admins and mods are immune to the filter
-        if self.immune_from_filter(message) or not can_delete:
-            return
-
         if sid in self.regexen:
-            patterns = {}
+
+            # Owner, admins and mods are immune to the filter unless configured otherwise
+            no_exemptions = self.regexen[sid].get('no_exemptions', False)
+            if not can_delete or (self.immune_from_filter(message) and not no_exemptions):
+                return
+
             # compile list of patterns from global and channel
-            for key in [ALL_CHANNELS, message.channel.id]:
-                if key in self.regexen[sid]:
-                    patterns.update(self.regexen[sid][key])
-            # Iterate through patterns
-            for regex, mode in patterns.items():
-                # Skip disabled patterns
-                if mode == MODE_DISABLED:
-                    continue
-                regex = self.recache[regex] if regex in self.recache else re.compile(regex)
-                if (mode == MODE_EXCLUSIVE) != bool(regex.match(message.content)):  # xor
-                    await self.bot.delete_message(message)
+            for key in (ALL_CHANNELS, message.channel.id):
+
+                # Iterate through patterns
+                for pattern, mode in self.regexen[sid].get(key, {}).items():
+
+                    # Skip disabled patterns
+                    if mode == MODE.DISABLED:
+                        continue
+
+                    regex = self.recache.get(pattern)
+                    if not regex:
+                        regex = re.compile(pattern)
+                        self.recache[pattern] = regex
+
+                    match = await self.bot.loop.run_in_executor(self.executor, check_match, regex, message.content)
+
+                    if (mode == MODE.EXCLUSIVE) != match:  # xor
+                        await self.bot.delete_message(message)
+                        return
 
     async def on_message_edit(self, old_message, new_message):
         await self.on_message(new_message)
