@@ -8,7 +8,7 @@ import os
 import time
 import re
 
-__version__ = '1.8.1'
+__version__ = '1.8.2'
 
 try:
     from tabulate import tabulate
@@ -248,13 +248,13 @@ class Punish:
         count = 0
         now = time.time()
         server = ctx.message.server
-        data = self.json.get(server.id, [])
+        data = self.json.get(server.id, {})
 
-        for mid, data in data.copy().items():
+        for mid, mdata in data.copy().items():
             if not mid.isdigit() or server.get_member(mid):
                 continue
 
-            elif clean_pending or ((data['until'] or 0) < now):
+            elif clean_pending or ((mdata['until'] or 0) < now):
                 del(data[mid])
                 count += 1
 
