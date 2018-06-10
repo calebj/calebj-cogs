@@ -1,9 +1,9 @@
 {
-    "AUTHOR" : "Kowlin and CalebJ",
-    "INSTALL_MSG" : "Thanks for installing Punish.",
+    "AUTHOR" : "Kowlin and GrumpiestVulcan (calebj#0001)",
+    "INSTALL_MSG" : "Thanks for installing Punish. Documentation on how to use it can be found here: <https://github.com/calebj/calebj-cogs#how-do-i-use-punish>",
     "NAME" : "Punish",
-    "SHORT" : "Punish a misbehaving user.",
-    "DESCRIPTION" : "Punish a misbehaving user. This places a user into timeout, removing his permission to talk on ALL channels.",
+    "SHORT" : "Put misbehaving users in timeout using role permissions.",
+    "DESCRIPTION" : "Put misbehaving users in timeout using role permissions. The default is to remove their permission to talk on ALL channels, but the overrides can be customized. Includes anti-evasion measures, voice mute support, modlog integration, timed or indefinite durations, designation of a timeout channel, and more.",
     "REQUIREMENTS": ["tabulate"],
     "TAGS" : ["utility", "punish", "mod", "mute", "moderation"]
 }

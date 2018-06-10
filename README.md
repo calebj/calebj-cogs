@@ -11,6 +11,7 @@ This repo contains cogs I've written, as well as those I've modified and republi
 * [Frequently Asked Questions](#frequently-asked-questions)
   * [What does activitylog do?](#what-does-activitylog-do)
   * [How do I use embedwiz?](#how-do-i-use-embedwiz)
+  * [How do I use punish?](#how-do-i-use-punish)
   * [How do I use recensor?](#how-do-i-use-recensor)
   * [How do I use scheduler?](#how-do-i-use-scheduler)
   * [How do I use watchdog?](#how-do-i-use-watchdog)
@@ -49,7 +50,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * embedwiz: A simple tool to generate and post custom embeds.
 * galias: Bot-wide command aliases. Only the bot owner can add/remove them.
 * gallery: Automatically clean up comments in content-focused channels.
-* punish: Timed text and voice mute with evasion protection.
+* punish: Timed text+voice mute with anti-evasion, modlog cases, and more.
 * purgepins: Delete pin notification messages after a per-channel interval.
 * recensor: Create inclusive or exclusive regex filters per channel or server.
 * scheduler: Squid's [scheduler cog][squid_scheduler], with enhancements.
@@ -129,6 +130,34 @@ Only mods and those with the manage_messages permission can use these subcommand
 * `embedwiz channel [channel] [embed_spec ...]` : posts the embed in the channel `channel` instead.
 * `embedwiz delete [embed_spec ...]` : deletes the command message (and prompt message, if used).
 * `embedwiz edit [channel] [message_id] [embed_spec ...]` : edits **any** existing embed.
+
+### How do I use punish?
+The punish cog automatically sets itself up in most cases. In case some role configurations need to be re-applied, the role needs to be recreated, etc., run `[p]punishset setup`.
+
+To "punish" a user, simply run `[p]punish <user> [duration] [optional reason ...]`, where `duration` can be `forever` or `infinite` to set no end time. If no duration of provided, the default of 30 minutes is used. If the user is already punished, their timer will be updated to match the provided duration, and the reason will be updated if a new one is given.
+
+`[duration]` can be any combination of numbers and units, e.g. 5m30s, or a long format such as "5 minutes and 30 seconds". Valid units are `s`, `m`, `h`, `d`, `w`. Intervals containing spaces must be in double quotes. The values `forever`, `infinite`, and `disable` are command-specific.
+
+To end a punishment before the time has run out, run `[p]punish end <user> [optinal end reason ...]`. The role can also be removed manually, but this isn't recommended because there currently isn't a way for the bot to know who removed the role.
+
+There is also a `[p]punish warn <user> [optional reason ...]` command, but all it does is format a boilerplate message. In the future, it might support custom responses or be used for tracking warnings/strikes.
+
+#### Modlog integration and updating punishment reasons
+By default, durations longer than 30 minutes will create modlog cases. Naturally, if the mod cog is not loaded or no modlog channel is set, no cases will be created. To view, adjust or disable this setting, use the `[p]punishset case-min [duration]`, where `duration` can be `disable`, or left blank to view the current setting.
+
+Updating the reason for punishment has its own command, since the `[p]reason` command only updates the modlog. That command is `[p]punish reason <user> [new reason ...]`, and it will automatically update any existing modlog case. __If the new reason is left blank, it will be cleared.__
+
+#### Custom permission overrides and timeout channel
+Channel overrides for the punish role be easily customized and applied to all channels in a server (except the timeout channel, as explained below). To copy the overrides from a channel, run `[p]punishset overrides [channel]`. The channel's type can be either text or voice; the overrides for each type are seperate. To display the current overrides, leave `channel` blank.
+
+Once set, overrides can be deployed to all channels with `[p]punishset setup`. To restore the default overrides, run `[p]punishset reset-overrides [channel_type]`, where channel_type is `voice`, `text`, or `both` (the default).
+
+Note: if the voice override does not deny speak or connect permissions to the punished role, the cog will not automatically enable server-wide voice mute to punished users.
+
+It is possible to designate a special channel which punished users are allowed to speak in (for example, to discuss their infractions in private with a moderator). When set using `[p]punishset channel [channel]`, the punished role is automatically granted explicit permissions to read and speak in that channel. To view the current channel, run `[p]punishset channel` without any arguments. Or, to revert this setting and restore the normal permission overrides, run `[p]punishset clear-channel`.
+
+#### Punished user list formatting
+Support for multi-line headers and cells was added in tabluate version 0.8.0. If the installed version is older than that, the formatting for `[p]punish list` will revert to a single-row layout, which can easily overflow and cause ugly formatting. To prevent this, simply update tabulate (a quick shortcut to do so is `[p]debug bot.pip_install('tabulate')`).
 
 ### How do I use recensor?
 The recensor cog uses Python's [`re.match()`](https://docs.python.org/3/library/re.html#re.match) to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is [here](https://docs.python.org/3/library/re.html#regular-expression-syntax). Unlike [`re.search()`](https://docs.python.org/3/library/re.html#re.search), the pattern matching is anchored to the beginning of the message text. If you want a pattern to match anywhere in the message, you must put `.*` at the beginning of the pattern.
