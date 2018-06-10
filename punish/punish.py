@@ -8,7 +8,7 @@ import os
 import time
 import re
 
-__version__ = '1.8.0'
+__version__ = '1.8.1'
 
 try:
     from tabulate import tabulate
@@ -199,7 +199,7 @@ class Punish:
             if member:
                 return str(member)
             else:
-                return '(absent user #%d)' % mid
+                return '(absent user #%s)' % mid
 
         headers = ['Member', 'Remaining', 'Punished by', 'Reason']
         table = []
