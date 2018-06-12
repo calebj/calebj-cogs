@@ -15,7 +15,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.3.1'
+__version__ = '1.3.2'
 
 # Analytics core
 import zlib, base64
@@ -101,6 +101,9 @@ class EmbedWizard:
         Title;color;footer text;footer_icon;image_url;thumbnail_url;body text
 
         All values can be seperated by newlines, spaces, or other whitespace.
+        Only the first six semicolons are used, the rest are ignored. To
+        use semicolons in any of the first six fields, escape it like so: \;
+        To include a backslash before a semicolon without escaping, do: \\\\;
 
         Color can be a #HEXVAL, "random", or a name that discord.Color knows.
         Options: https://discordpy.readthedocs.io/en/async/api.html#discord.Colour
@@ -216,7 +219,15 @@ class EmbedWizard:
             set_author = False
             specification = specification[10:]
 
-        split = specification.split(';', 7)
+        # split = specification.split(';', 6)
+        split = re.split(r'(?<!(?<!\\)\\);', specification, 6)
+
+        # If user used double backslash to avoid escape, replace with a single
+        # backslash, but not in the body field
+        for i, s in enumerate(split[:-1]):
+            if s.endswith(r'\\'):
+                split[i] = s[:-1]
+            
         nfields = len(split)
         if nfields != 7:
             op = 'many' if nfields > 7 else 'few'
