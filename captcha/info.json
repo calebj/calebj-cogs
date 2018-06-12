@@ -1,0 +1,10 @@
+{
+    "AUTHOR" : "GrumpiestVulcan",
+    "DESCRIPTION" : "Challenge new members with a challenge before adding/removing a role.",
+    "DISABLED" : false,
+    "SHORT" : "Challenge new members with a captcha.",
+    "NAME" : "Captcha",
+    "TAGS" : ["captcha", "challenge", "verification"],
+    "INSTALL_MSG" : "Installed! Configure the cog for your server using [p]captchaset.",
+    "REQUIREMENTS" : ["captcha", "wheezy.captcha", "Pillow"]
+}

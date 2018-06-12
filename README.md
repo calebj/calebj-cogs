@@ -44,6 +44,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 
 ## Cog Summaries
 * [activitylog](#activitylog): Log messages, attachments, and server changes to disk.
+* [captcha](#captcha): Challenge new members with a random code to verify their humanity.
 * customgcom: Bot-wide custom commands. Only the bot owner can add/remove them.
 * datadog: Publish various metrics and events to a local statsd instance.
 * description: Change the header of Red's [p]help command.
@@ -91,6 +92,36 @@ Activitylog can record the following events:
   * Attachment downloading is still its own setting.
 
 Note: The version of discord.py that Red v2 is based on doesn't have a way to record audit logs, so there's no way to record which member made a particular change.
+
+### Captcha
+Captcha allows you to challenge incoming members with a code they must enter to become verified.
+
+Challenges can be sent and responded to via direct messages or in a server channel, and verification/approval can either be indicated by the presence of or the absence of a role. If an image is impossible to decipher (users get unlimited retries, as incorrect codes are simply ignored), they can say "retry" to get a new one.
+
+The cog supports three types of challenges:
+
+| Name   | Example |
+| ------ | ------- |
+| plain  | ![plain example](captcha/example_plain.png?raw=true) |
+| image  | ![image example](captcha/example_image.png?raw=true) |
+| wheezy | ![wheezy example](captcha/example_wheezy.png?raw=true) |
+
+Moderators and members with the Manage Roles permission can run these commands:
+* `[p]captcha approve <member>` : manually bypass the captcha challenge for a member
+* `[p]captcha approve-all` : mark all pending members as approved
+* `[p]captcha challenge <member>` : unverify and challenge a member
+
+Admins and members with the Manage Serve permission can run these commands:
+* `[p]captchaset channel [channel]` : set which channel captchas are posted in
+* `[p]captchaset dm [on|off]` : set whether captchas are sent via DMs
+* `[p]captchaset enabled [on|off]` : turns the cog on and off in the server
+* `[p]captchaset kick-delay [duration]` : set how long to wait for a correct code before kicking
+* `[p]captchaset retry-delay [duration]` : set how long members have to wait to regenerate their code
+* `[p]captchaset role [role]` : set which role the cog uses to mark un/verified members
+* `[p]captchaset role-mode [[un]verified]` : set whether the role means members are verified or unverified
+* `[p]captchaset type [image|plain|wheezy]` : set the type of captchas to generate (see table above)
+
+`[duration]` can be any combination of numbers and units, e.g. 5m30s, or a long format such as "5 minutes and 30 seconds". Valid units are `s`, `m`, `h`, `d`, `w`. It can also be `none` or `disable`.
 
 ### EmbedWiz
 EmbedWiz is a fairly simply cog.
