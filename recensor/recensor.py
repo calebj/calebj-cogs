@@ -1,39 +1,39 @@
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+# import asyncio
+from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor
+# from copy import copy
 import discord
+from discord import Object as DiscordObject
+from discord.mixins import Hashable as DiscordHashable
 from discord.ext import commands
+# from discord.ext.commands import converter as converters
+from discord.ext.commands.errors import BadArgument
+from discord.ext.commands.view import StringView
 from enum import Enum
+from functools import partial
+import inspect
 import logging
+from multiprocessing import Manager
 import os
 import re
-import tabulate
-
+# import textwrap
+from typing import Optional, Iterable, List, Union, Type
+import urllib.parse
 
 from .utils.dataIO import dataIO
 from .utils import checks
+from .utils.chat_formatting import box, warning, error, info
 
-# Some magic values
-ALL_CHANNELS = 'all'
-
-
-class MODE(Enum):
-    INCLUSIVE = 'incl'  # deletes all messages matching
-    EXCLUSIVE = 'excl'  # delete all messages not matching
-    DISABLED  = 'none'  # pattern disabled
-
-
-MODES = [MODE.DISABLED, MODE.EXCLUSIVE, MODE.INCLUSIVE]
-
-log = logging.getLogger('red.recensor')
-
-DATA_PATH = "data/recensor/"
-JSON_PATH = DATA_PATH + "regexen.json"
-
-def check_match(regex, message):
-    return bool(regex.match(message))
+try:
+    import tabulate
+    assert tabulate.__version__ >= '0.8.0'
+except (AssertionError, ImportError) as e:
+    raise RuntimeError("You must install tabulate v0.8.0+ to use recensor. Run `[p]debug bot.pip_install('tabulate')` "
+                       "on the bot or `pip install -U tabulate`in your shell.") from e
 
 
 # Analytics core
-import zlib, base64
+import zlib, base64  # noinspection PyPep8
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -63,297 +63,2143 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.6.0'
+__version__ = '2.0.0'
+
+log = logging.getLogger('red.recensor')
+
+DATA_PATH = "data/recensor/"
+JSON_PATH = DATA_PATH + "regexen.json"
+DEFAULT_FLAGS = 'IS'
+
+FLAGS_DESC = {
+    'A': 'ASCII',
+    'I': 'ignorecase',
+    'L': 'locale',
+    'M': 'multiline',
+    'S': 'dotall',
+    'X': 'verbose'
+}
+
+DATACLASSES_BY_NAME = {
+    'server'  : discord.Server,
+    'role'    : discord.Role,
+    'channel' : discord.Channel,
+    'member'  : discord.Member,
+    'user'    : discord.User
+}
+
+NAMES_BY_DATACLASS = {DATACLASSES_BY_NAME[k]: k for k in DATACLASSES_BY_NAME}
+
+ITEM_LOOKUP_GETTERS = {
+    discord.Role    : lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.roles, id=i))),
+    discord.Emoji   : lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.emojis, id=i))),
+    discord.Channel : lambda c: (c.message.server and c.message.server.get_channel),
+    discord.Member  : lambda c: (c.message.server and c.message.server.get_member),
+    discord.User    : lambda c: (c.message.server and c.message.server.get_member),
+    discord.Server  : lambda c: c.bot.get_server
+}
+
+ITEM_LIST_GETTERS = {
+    discord.Role    : lambda c: (c.message.server and c.message.server.roles),
+    discord.Emoji   : lambda c: (c.message.server and c.message.server.emojis),
+    discord.Channel : lambda c: (c.message.server and c.message.server.channels),
+    discord.Member  : lambda c: (c.message.server and c.message.server.members),
+    discord.User    : lambda c: (c.message.server and c.message.server.members),
+    discord.Server  : lambda c: c.bot.servers
+}
+
+MENTIONS_BY_DATACLASS = {
+    discord.Role    : '<@&%s>',
+    discord.Channel : '<#%s>',
+    discord.Member  : '<@!%s>',
+    discord.User    : '<@!%s>'
+}
+
+DiscordUniObj = Union[DiscordObject, DiscordHashable]
+
+
+# Isolated to allow running potentially slow patterns in a ProcessPoolExecutor
+def check_match(predicate, string: str):
+    return bool(predicate(string))
+
+
+# https://stackoverflow.com/a/11564323
+def topological_sort(source):
+    """
+    Perform topo sort on elements.
+
+    :arg source: list of ``(name, [list of dependencies])`` pairs
+    :returns: list of names, with dependencies listed first
+    """
+    # copy dependencies so we can modify set in-place
+    pending = [(name, set(deps)) for name, deps in source]
+    emitted = []
+
+    while pending:
+        next_pending = []
+        next_emitted = []
+
+        for entry in pending:
+            name, deps = entry
+            deps.difference_update(emitted)  # remove deps we emitted last pass
+
+            if deps:  # still has deps? recheck during next pass
+                next_pending.append(entry)
+            else:  # no more deps? time to emit
+                yield name
+                emitted.append(name)  # <-- not required, but helps preserve original ordering
+                next_emitted.append(name)  # remember what we emitted for difference_update() in next pass
+
+        if not next_emitted:  # all entries have unmet dependencies, one of two things is wrong...
+            raise ValueError("cyclic or missing dependancy detected: %r" % (next_pending,))
+
+        pending = next_pending
+        emitted = next_emitted
+
+
+class POSITION(Enum):
+    START    = 'start'
+    FULL     = 'full'
+    ANYWHERE = 'anywhere'
+
+
+def type_from_name(list_name: str):
+    for k in DATACLASSES_BY_NAME:
+        k = k.lower()
+        if list_name.startswith(k):
+            return DATACLASSES_BY_NAME[k]
+
+    return None
+
+
+def flags_to_int(flag_chars):
+    flags = 0
+
+    for c in flag_chars:
+        flags |= getattr(re, c.upper(), 0)
+
+    return flags
+
+
+class FilterBase:
+    pass
+
+
+class ItemTypeReference(DiscordObject, DiscordHashable):
+    pass
+
+
+class FilterList:
+    __slots__ = ['parent', 'base_list', 'item_type', 'enabled', 'mode', 'overlay', 'items', 'whoami']
+
+    def __init__(self, parent, whoami: str, item_type: Type[DiscordUniObj], *, base_list=None, **data):
+        self.parent = parent
+        self.whoami = whoami
+        self.base_list = base_list
+        self.item_type = item_type
+
+        self.enabled = data.get('enabled', False)
+        self.mode = data.get('mode', True)
+        self.overlay = data.get('overlay', True)
+        self.items = set(data.get('items', []))
+
+    def convert_item(self, ctx, item):
+        """
+        Attempts to use discord's converters on the item type. Requires ctx.
+        """
+        return ctx.command.do_conversion(ctx, self.item_type, item)
+
+    def check(self, obj: DiscordUniObj) -> bool:
+        """
+        Return True if obj is in the list, based on its ID attribute
+        """
+        return isinstance(obj, self.item_type) and self.check_id(obj.id)
+
+    def check_id(self, obj_id: str, *, recurse=True) -> Optional[bool]:
+        """
+        Checks whether an ID is a member of the list
+        """
+        if recurse and self.overlay and self.base_list and self.base_list.check_id(obj_id) is False:
+            return False
+        elif not self.enabled:
+            return None
+
+        if obj_id in self.items:
+            return self.mode
+
+        return not self.mode
+
+    def check_id_iter(self, id_iter: Iterable[str]) -> Optional[bool]:
+        """
+        Return True if ANY object whose IDs are in id_list are in the list
+        """
+        base_enabled = self.overlay and self.base_list and self.base_list.enabled
+
+        if not self.enabled:
+            if base_enabled:
+                return self.base_list.check_id_iter(id_iter)
+            else:
+                return None
+
+        if base_enabled:
+            for _id in id_iter:
+                if self.base_list.check_id(_id) is False:
+                    return False
+                elif self.check_id(_id, recurse=False):
+                    return True
+
+        elif any(_id in self.items for _id in id_iter):
+            return self.mode
+
+        return not self.mode
+
+    def check_iter(self, obj_list: Iterable[DiscordUniObj]) -> Optional[bool]:
+        return self.check_id_iter((x.id for x in obj_list))
+
+    def filter(self, items: Iterable) -> List:
+        """
+        Returns a subset of the input containing objects that are in the list
+        """
+        return list(filter(self.check, items))
+
+    def to_json(self) -> dict:
+        data = {
+            'mode'    : self.mode,
+            'items'   : list(self.items),
+            'enabled' : self.enabled
+        }
+
+        if self.overlay is not None:
+            data['overlay'] = self.overlay
+
+        return data
+
+    def __contains__(self, obj: DiscordUniObj) -> bool:
+        return self.check(obj)
+
+    def copy(self):
+        return type(self)(
+            self.parent,
+            self.whoami,
+            self.item_type,
+            base_list=self.base_list,
+            enabled=self.enabled,
+            mode=self.mode,
+            overlay=self.overlay,
+            items=self.items
+        )
+
+
+class ServerConfig(FilterBase):
+    __slots__ = ['cog', 'priv_exempt', 'roles_list', 'channels_list', 'filters', 'order']
+
+    def __init__(self, cog, **data):
+        self.cog = cog
+        self.name = 'SERVER'
+
+        self.priv_exempt = data.get('priv_exempt', True)
+        self.filters = {}
+        self.order = []
+
+        lists_deps = {}
+
+        # Create server-wide lists
+        for list_name in ['roles_list', 'channels_list']:
+            item_type = type_from_name(list_name)
+            _list = FilterList(self, list_name, item_type, overlay=None, **data.get(list_name, {}))
+            setattr(self, list_name, _list)
+            lists_deps[list_name] = {}
+
+        # Instantiate filters without linked sublists
+        for name, filter_data in data.get('filters', {}).items():
+            self.filters[name] = Filter(self, name=name, defer_link=True, **filter_data)
+
+            # list_deps is empty, set it here
+            for list_name, list_deps in lists_deps.items():
+                link_name = filter_data.get(list_name + '_link')
+
+                if link_name in [None, 'SERVER']:
+                    list_deps[name] = []
+                else:
+                    list_deps[name] = [link_name]
+
+        for list_name, list_deps in lists_deps.items():
+            for fname in topological_sort(list_deps.items()):
+                if list_deps[fname]:  # if dep list is nonempty
+                    self.filters[fname].set_list(list_name, link_dest=list_deps[fname][0])
+
+        self.update_order()
+
+    def update_order(self):
+        filters = (f for f in self.filters.values() if f.enabled)
+        self.order[:] = sorted(filters, key=lambda f: f.filter_priority, reverse=True)
+
+    def make_link(self, link_owner, target_owner, list_name):
+        dep_graph = {}
+
+        # build the current state
+        for _filter in self.filters.values():
+            link_dest = _filter.links.get(list_name)
+            dep_graph[_filter.name] = [] if link_dest in [self, None] else [link_dest.name]
+
+        # make the proposed change
+        dep_graph[link_owner.name] = [target_owner.name]
+
+        # test for cycles/broken links
+        sorted_names = topological_sort(dep_graph.items())
+
+        # apply the changes
+        for name in sorted_names:
+            if dep_graph[name]:
+                self.filters[name].set_list(list_name, link_dest=dep_graph[name][0])
+            else:
+                self.filters[name].links.pop(list_name, None)
+
+        assert getattr(link_owner, list_name) is getattr(target_owner, list_name)
+        return getattr(target_owner, list_name)
+
+    def break_link(self, link_owner, list_name, *, copy=False, **newlist_data):
+        current_list = getattr(link_owner, list_name)
+        if current_list.parent is link_owner:
+            raise TypeError("Not linked.")
+        elif copy and newlist_data:
+            raise TypeError("If copy is set, no extra data should be passed.")
+
+        dep_graph = {}
+
+        # build the current state
+        for _filter in self.filters.values():
+            link_dest = _filter.links.get(list_name)
+            dep_graph[_filter.name] = [] if link_dest in [self, None] else [link_dest.name]
+
+        # make the proposed change
+        dep_graph[link_owner.name] = []
+
+        # test for cycles/broken links
+        sorted_names = topological_sort(dep_graph.items())
+
+        # apply the changes
+        for name in sorted_names:
+            if dep_graph[name]:
+                self.filters[name].set_list(list_name, link_dest=dep_graph[name][0])
+            elif name == link_owner.name:
+                if copy:
+                    newlist_obj = getattr(self.filters[name], list_name).copy()
+                    newlist_obj.parent = link_owner
+                    link_owner.set_list(list_name, newlist_obj=newlist_obj)
+                else:
+                    self.filters[name].set_list(list_name, newlist_data=newlist_data)
+            else:
+                self.filters[name].links.pop(list_name, None)
+
+            return getattr(link_owner, list_name)
+
+    def get_filter(self, _filter: Union[str, 'Filter'], check=False):
+        if isinstance(_filter, Filter):
+            if _filter.parent is not self:
+                if not check:
+                    return None
+                raise TypeError("the provided filter does not belong to this config")
+            elif _filter not in self.filters.values():
+                if not check:
+                    return None
+                raise ValueError("the provided filter is not in this config")
+            else:
+                return _filter
+        elif type(_filter) is str:
+            if _filter not in self.filters:
+                if not check:
+                    return None
+                raise ValueError("there is no filter named '%s'" % _filter)
+            else:
+                return self.filters[_filter]
+        else:
+            raise TypeError('only Filter objects or names (str) may be passed')
+
+    def add_filter(self, name: str, **data):
+        if self.get_filter(name):
+            raise ValueError("filter %s already exists" % name)
+
+        self.filters[name] = f = Filter(self, name=name, **data)
+
+        if f.enabled:
+            self.update_order()
+
+        return f
+
+    def rename_filter(self, _filter: Union[str, 'Filter'], new_name: str):
+        _filter = self.get_filter(_filter, check=True)
+
+        if type(new_name) is not str:
+            raise TypeError('only strings may be passed as new name')
+        elif not new_name:
+            raise ValueError('new name must be nonempty')
+
+        if self.get_filter(new_name):
+            raise ValueError("filter %s already exists" % new_name)
+
+        self.filters[new_name] = self.filters.pop(_filter.name)
+        _filter.name = new_name
+        return _filter
+
+    def delete_filter(self, _filter: Union[str, 'Filter']):
+        _filter = self.get_filter(_filter, check=True)
+
+        channels_linked = []
+        roles_linked = []
+        linked_err = []
+
+        for fname, f in self.filters.items():
+            if f is _filter:
+                continue
+            if f.links.get('channels_list') is _filter:
+                channels_linked.append(fname)
+            if f.links.get('roles_list') is _filter:
+                roles_linked.append(fname)
+
+        if channels_linked:
+            linked_err.append('channels: ' + ', '.join(channels_linked))
+        if roles_linked:
+            linked_err.append('roles: ' + ', '.join(roles_linked))
+        if linked_err:
+            raise TypeError('links exist from other filters: ' + '; '.join(linked_err))
+
+        self.filters.pop(_filter.name)
+
+        if _filter.enabled:
+            self.update_order()
+
+        return True
+
+    async def check_message(self, message: discord.Message):
+        """
+        Return true if message should be deleted
+        """
+        has_white = False
+        match_white = False
+        list_cache = {}
+
+        for f in self.order:
+            if not (f.check_meta(message, list_cache) and f.predicate):
+                continue
+
+            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, message.content)
+
+            if f.override and match:  # override black or white
+                return not f.mode
+            elif has_white and not f.mode:
+                return not match_white  # Message has whitelist but we're on a blacklist, return immediately
+            elif f.mode:  # white for both normal or override, ORed between all matches
+                has_white = True
+                match_white |= bool(match)
+            elif match:  # black regular
+                return True
+
+        return False
+
+    def to_json(self):
+        return {
+            'priv_exempt'   : self.priv_exempt,
+            'channels_list' : self.channels_list.to_json(),
+            'roles_list'    : self.roles_list.to_json(),
+            'filters'       : {k: v.to_json() for k, v in self.filters.items()}
+        }
+
+
+class Filter(FilterBase):
+    __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'position',
+                 'channels_list', 'roles_list', 'priv_exempt', '_predicate', 'links']
+
+    def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
+        self.parent = parent
+        self.name = name
+
+        self.pattern = data.get('pattern', '')
+        self.flags = data.get('flags', DEFAULT_FLAGS)
+        self.mode = data.get('mode', False)
+        self.enabled = data.get('enabled', False)
+        self.override = data.get('override', False)
+        self.priv_exempt = data.get('priv_exempt', None)
+
+        self.position = POSITION(data.get('position', POSITION.ANYWHERE))
+        self._predicate = self.rebuild_predicate()
+
+        self.links = {}
+
+        for k in ['roles_list', 'channels_list']:
+            self.set_list(k, link_dest=data.get(k + '_link'), defer=defer_link, newlist_data=data.get(k, {}))
+
+    def set_list(self, list_name, *, link_dest=None, defer=False, newlist_data=None, newlist_obj: FilterList = None):
+        list_val = None
+        server_list = getattr(self.parent, list_name)
+
+        if not link_dest:
+            if newlist_data is None and not newlist_obj:
+                raise TypeError("list_data or list_obj required without link_dest")
+            elif newlist_obj and newlist_data is not None:
+                raise TypeError("only list_data or list_obj can be passed, not both")
+            elif newlist_obj:
+                list_val = newlist_obj
+            else:
+                item_type = type_from_name(list_name)
+                list_val = FilterList(self, list_name, item_type, base_list=server_list, **newlist_data)
+
+            self.links.pop(list_name, None)
+        elif link_dest == 'SERVER':
+            list_val = server_list
+            self.links[list_name] = self.parent
+        elif not defer:
+            linked_filter = self.parent.filters[link_dest]
+            self.links[list_name] = linked_filter
+            list_val = getattr(linked_filter, list_name)
+
+        setattr(self, list_name, list_val)
+
+    def rebuild_predicate(self):
+        try:
+            compiled = re.compile(self.pattern, flags_to_int(self.flags))
+        except Exception:
+            self._predicate = False
+            return False
+
+        if self.position == POSITION.START:
+            match_func = compiled.match
+        elif self.position == POSITION.FULL:
+            match_func = compiled.fullmatch
+        elif self.position == POSITION.ANYWHERE:
+            match_func = compiled.search
+        else:
+            raise ValueError("Unknown position value: %s" % self.position)
+
+        self._predicate = partial(check_match, match_func)
+        return self._predicate
+
+    @property
+    def predicate(self):
+        if not self._predicate:
+            self._predicate = self.rebuild_predicate()
+
+        return self._predicate
+
+    def check_meta(self, message: discord.Message, cache=None):
+        """
+        Return True if message is eligible for regex check
+        """
+        if not self.enabled:
+            return False
+
+        if cache is None:
+            cache = {}
+
+        if 'mos' in cache:
+            mos = cache['mos']
+        else:
+            cache['mos'] = mos = self.parent.cog.is_mod_or_superior(message)
+
+        if mos:
+            if self.priv_exempt:
+                return False
+            elif self.priv_exempt is None and self.parent.priv_exempt:
+                return False
+
+        if self.channels_list in cache:
+            clr = cache[self.channels_list]
+        else:
+            cache[self.channels_list] = clr = self.channels_list.check(message.channel)
+
+        if clr is False:
+            return False
+
+        if self.roles_list in cache:
+            rlr = cache[self.roles_list]
+        else:
+            cache[self.roles_list] = rlr = self.roles_list.check_iter(message.author.roles)
+
+        if rlr is False:
+            return False
+
+        return True
+
+    def to_json(self):
+        data = {
+            'enabled'     : self.enabled,
+            'pattern'     : self.pattern,
+            'flags'       : self.flags,
+            'mode'        : self.mode,
+            'override'    : self.override,
+            'priv_exempt' : self.priv_exempt,
+            'position'    : self.position.value
+        }
+
+        for k in ['roles_list', 'channels_list']:
+            if k in self.links:
+                data[k + '_link'] = self.links[k].name
+            else:
+                data[k] = getattr(self, k).to_json()
+
+        return data
+
+    @property
+    def filter_priority(self):
+        #  p e o m
+        #  3 1 1 0
+        #  2 1 1 1
+        #  1 1 0 1
+        #  0 1 0 0
+        # -1 0 x x
+        if not self.enabled:
+            return -1
+        elif self.override:
+            return 2 + int(not self.mode)
+
+        return int(self.mode)
 
 
 class ReCensor:
+    """
+    Filter messages using regular expressions
+    """
 
-    # Data format:
+    # Old data format:
     # {
-    #  serverid (str): {
-    #   channelid (str): {
+    #  server_id (str): {
+    #   channel_id (str): {
     #     regex (str): mode (str from MODES)
     #     }
+    #   }
+    # }
+    #
+    # New data format:
+    # {
+    #   server_id (str): {
+    #       'filters' : {
+    #           name (str) : {
+    #               'pattern'       : pattern (str),
+    #               'flags'         : flags (str containing subset of AILUMSX),
+    #               'enabled'       : bool (default false),
+    #               'mode'          : bool (default false),
+    #               'override'      : bool (default false),
+    #               'position'      : enum[str] (default POSITION.ANYWHERE),
+    #               'channels_list' : {
+    #                       'mode'      :   tristate,
+    #                       'items'     :   list[channel_id (str)]},
+    #                       'overlay'   :   optional bool (default true)
+    #               },
+    #               'roles_list'    : {
+    #                       'mode'      :   tristate,
+    #                       'items'     :   list[channel_id (str)]},
+    #                       'overlay'   :   optional bool (default true)
+    #               },
+    #               'priv_exempt'   : tristate
+    #           }
+    #       },
+    #       'priv_exempt'   : bool (default true),
+    #       'roles_list'    : {
+    #                   'mode'  :   tristate,
+    #                   'items' :   list[channel_id (str)]}
+    #       },
+    #       'channels_list' : {
+    #                   'mode'  :   tristate,
+    #                   'items' :   list[channel_id (str)]}
+    #       },
     #   }
     # }
 
     def __init__(self, bot):
         self.bot = bot
-        self.regexen = dataIO.load_json(JSON_PATH)
-        self.recache = {}
+        self.ready = False
+
+        self.manager = Manager()
         self.executor = ProcessPoolExecutor()
-        self.unloading = False
+        self.settings = {}
+        self.misc_data = {}
+        self._ignore_filters = {}
+
+        data = dataIO.load_json(JSON_PATH)
+        if data.get('_schema_version', 1) < 2:
+            data = migrate_data(data)
+            dataIO.save_json(JSON_PATH, data)
+
+        for k, v in data.items():
+            if k.startswith('_') or type(v) is not dict or not k.isnumeric():
+                self.misc_data[k] = v
+            else:
+                self.settings[k] = ServerConfig(self, **v)
 
         try:
+            # noinspection PyUnresolvedReferences
             self.analytics = CogAnalytics(self)
-        except Exception as error:
-            self.bot.logger.exception(error)
+        except Exception as e:
+            self.bot.logger.exception(e)
             self.analytics = None
 
-        bot.loop.create_task(self.compile_regexen())
+        self._list_functions = OrderedDict([
+            ('help'       , self._list_command_help),
+            ('enabled'    , self._list_command_enabled),
+            ('mode'       , self._list_command_mode),
+            ('overlay'    , self._list_command_overlay),
+            ('add'        , self._list_command_add),
+            ('remove'     , self._list_command_remove),
+            ('clear'      , self._list_command_clear),
+            ('cleanup'    , self._list_command_cleanup),
+            ('invert'     , self._list_command_invert),
+            ('link'       , self._list_command_link),
+            ('unlink'     , self._list_command_unlink),
+            ('replace'    , self._list_command_replace),
+            ('union'      , self._list_command_union),
+            ('difference' , self._list_command_difference),
+            ('intersect'  , self._list_command_intersect),
+            ('symdiff'    , self._list_command_symdiff)
+        ])
+
+        self.ready = True
 
     def __unload(self):
-        self.unloading = True
-        dataIO.save_json(JSON_PATH, self.regexen)
+        self.ready = False
+        self.executor.shutdown(wait=True)
+        self.save()
 
-    def _re_present(self, obj):
-        """Determines if any patterns are set for a server or channel"""
-        if type(obj) is discord.Server:
-            server = obj
-            if server.id in self.regexen:
-                for relist in self.regexen[server.id].values():
-                    if bool(relist):  # nonempty list
-                        return True
-                return False
-            else:
-                return False
+    def save(self):
+        data = {'_schema_version': 2}
+        data.update(self.misc_data)
+        data.update({k: v.to_json() for k, v in self.settings.items()})
+        dataIO.save_json(JSON_PATH, data)
 
-        elif type(obj) is discord.Channel:
-            server = obj.server
-            channel = obj
-            if channel.id in self.regexen[server.id]:
-                return bool(self.regexen[server.id][channel.id])
-            else:
-                return False
-
-        elif type(obj) is str:  # won't work with ALL_CHANNELS
-            channel = self.bot.get_channel(obj)
-            server = channel.server
-            if channel.id in self.regexen[server.id]:
-                return bool(self.regexen[server.id][channel.id])
-            else:
-                return False
-
-    def _ls_excl(self, server):
-        """returns a list of channel IDs with exclusive filters"""
-        clist = []
-        if type(server) is discord.Server:
-            server = server.id
-        if server in self.regexen:
-            for c, relist in self.regexen[server].items():
-                if MODE.EXCLUSIVE in relist.values():
-                    clist.append(c)
-        return clist
-
-    # Background cache regexen for speed
-    async def compile_regexen(self):
-        for s, channels in self.regexen.items():
-            for regex in channels:
-                self.recache[regex] = re.compile(regex)
-
-    @commands.group(name='recensor', pass_context=True)
+    @commands.group(name='recensor', pass_context=True, invoke_without_command=True, no_pm=True, rest_is_raw=True)
     @checks.mod_or_permissions(manage_messages=True)
-    async def recensor(self, ctx):
-        """Configure regular expression censorship"""
+    async def recensor(self, ctx, filter_name: str, setting_name: str = None, *, options):
+        """
+        Configure regular expression censorship
+
+        If a filter name is provided instead of a subcommand:
+        - If no command is provided, invoke [p]recensor show filter_name
+        - Otherwise, invoke [p]recensor set setting_name filter_name options...
+        """
+        if setting_name:
+            new_view = '%s "%s"' % (setting_name, filter_name)
+
+            if options:
+                new_view += ' ' + options
+
+            ctx.view = StringView(new_view)
+            await self.recensor_set.invoke(ctx)
+        elif filter_name in self.recensor_set.commands:
+            new_view = filter_name
+
+            if setting_name:
+                new_view += ' ' + setting_name
+
+            if options:
+                new_view += ' ' + options
+
+            ctx.view = StringView(new_view)
+            await self.recensor_set.invoke(ctx)
+        else:
+            settings = self.settings.get(ctx.message.server.id)
+            name = filter_name and filter_name.lower()
+
+            if not (settings and settings.get_filter(name)):
+                await self.bot.say(warning('There is no command or filter in this server named "%s".' % name))
+                return
+
+            ctx.command = self.recensor_list
+            await ctx.invoke(self.recensor_list, filter_name)
+
+    @recensor.command(pass_context=True, name='help')
+    async def recensor_help(self, ctx):
+        """
+        Posts links to online reference material
+        """
+        await self.bot.say(
+            "ReCensor manual: <https://github.com/calebj/calebj-cogs/#how-do-i-use-recensor>\n"
+            "A howto for Python's regex: <https://docs.python.org/3/howto/regex.html>\n"
+            "Full docs on regex syntax: <https://docs.python.org/3/library/re.html#regular-expression-syntax>"
+        )
+
+    @recensor.command(pass_context=True, name='list', aliases=['show'])
+    async def recensor_list(self, ctx, filter_name: str = None):
+        """
+        Displays all or one filter(s)
+
+        If no filter_name is specified, show all filters + server info.
+        If filter_name is 'server', only show server info.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name and filter_name.lower()
+
+        if not (settings and settings.filters):
+            await self.bot.say(info('There are no filters in this server to show.'))
+            return
+        elif name and name != 'server' and not settings.get_filter(name):
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        def format_list(_filter: FilterBase, list_name: str, elaborate_link: bool = False):
+            _list = getattr(_filter, list_name)
+            lines = []
+            linked = (_list.parent is not _filter)
+
+            if isinstance(_filter, Filter) and linked:  # note: server lists won't ever be linked
+                ult_parent = _list.parent
+                parent = _filter.links[list_name]
+                lines.append('Linked to: ' + parent.name)
+
+                if ult_parent != parent:
+                    lines.append('Link dest: ' + ult_parent.name)
+
+            if not linked or elaborate_link:
+                # lines.append('enabled: ' + ('yes' if _list.enabled else 'no'))
+                lines.append('Mode: ' + ('whitelist' if _list.mode else 'blacklist'))
+
+                if _list.overlay is not None:
+                    lines.append('Overlay: ' + ('yes' if _list.overlay else 'no'))
+
+                item_fmt = MENTIONS_BY_DATACLASS.get(_list.item_type, '#%s')
+
+                if _list.items:
+                    lines.append('Items (%i):' % len(_list.items))
+                    objects = [(item_fmt % i) for i in _list.items]
+                    objects.sort()
+                    lines.extend(objects)
+                else:
+                    lines.append('Items: (none)')
+
+            return '\n'.join(lines)
+
+        def format_params(obj):
+            order = ['mode', 'priv_exempt', 'override', 'position']
+            params = {
+                'priv_exempt' : ('yes' if obj.priv_exempt else 'no')
+            }
+
+            if type(obj) is Filter:
+                params.update({
+                    'enabled'  : ('yes' if obj.enabled else 'no'),
+                    'mode'     : ('white' if obj.mode else 'black'),
+                    'override' : ('yes' if obj.override else 'no'),
+                    'flags'    : obj.flags or '(none)',
+                    'position' : obj.position.value
+                })
+
+                if obj.priv_exempt is None:
+                    params['priv_exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
+
+            return '\n'.join((k.title() + ': ' + params[k]) for k in order if k in params)
+
+        if name is None:
+            objects = [settings] + [v for k, v in sorted(settings.filters.items())]
+        elif name == 'server':
+            objects = [settings]
+        else:
+            objects = [settings.get_filter(name)]
+
+        embeds = []
+
+        for item in objects:
+            description = format_params(item)
+
+            if isinstance(item, ServerConfig):
+                title = 'Server Configuration'
+                color = discord.Color.blue()
+            else:
+                title = 'Filter: ' + item.name
+                pname = 'Pattern'
+
+                if not item.predicate:
+                    pname += ' (INVALID!)'
+
+                description += ('\n\n%s:\n' % pname) + box(item.pattern)
+                if item.enabled:
+                    color = discord.Color.green() if item.mode else discord.Color.red()
+                else:
+                    title += ' (disabled)'
+                    color = discord.Color.dark_green() if item.mode else discord.Color.dark_red()
+
+            embed = discord.Embed(title=title, description=description, color=color)
+
+            for ltype in ['channels_list', 'roles_list']:
+                ename = ltype.replace('_', ' ').title()
+
+                if not getattr(item, ltype).enabled:
+                    ename += ' (disabled)'
+
+                embed.add_field(name=ename, value=format_list(item, ltype, elaborate_link=bool(name)))
+
+            if isinstance(item, Filter):
+                flags_val = '\n'.join('`%c` - %s' % (k, FLAGS_DESC[k]) for k in item.flags) or '(none)'
+                embed.add_field(name='Flags', value=flags_val)
+            #     embed.add_field(name='Pattern (position: %s):' % item.position.value,
+            #                     value=box(item.pattern), inline=False)
+
+            embeds.append(embed)
+
+        for embed in embeds:
+            await self.bot.say(embed=embed)
+
+    @recensor.command(pass_context=True, name='create', aliases=['add'], rest_is_raw=True)
+    async def recensor_create(self, ctx, name: str, *, pattern: str = None):
+        """
+        Creates a new filter
+        """
+        server = ctx.message.server
+        name = name.lower()
+        name_check = self.check_name(ctx, name)
+        settings = self.settings.get(server.id)
+        pattern = pattern.lstrip(' ')
+
+        if name_check:
+            await self.bot.say(name_check)
+            return
+        elif not settings:
+            self.settings[server.id] = settings = ServerConfig(self)
+
+        if pattern:
+            try:
+                re.compile(pattern, flags_to_int(DEFAULT_FLAGS))
+            except Exception as e:
+                await self.bot.say(error("Error compiling regular expression:\n") +
+                                   box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                return
+
+        kwargs = {'pattern': pattern} if pattern else {}
+
+        try:
+            settings.add_filter(name, **kwargs)
+        except Exception as e:
+            await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+            return
+
+        self.save()
+        await self.bot.say(info('Filter created%s. Configure it with `%srecensor %s [setting] [options]`'
+                           % (' and pattern set' if pattern else '', ctx.prefix, name)))
+
+    @recensor.command(pass_context=True, name='delete', aliases=['rm'])
+    async def recensor_delete(self, ctx, name: str):
+        """
+        Deletes a filter
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = name.lower()
+
+        if not (settings and settings.get_filter(name)):
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        if await self.confirm_thing(ctx, thing='delete the `%s` filter' % name):
+            try:
+                settings.delete_filter(name)
+            except Exception as e:
+                await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                return
+
+            self.save()
+            await self.bot.say(info("Filter deleted."))
+
+    @recensor.command(pass_context=True, name='rename')
+    async def recensor_rename(self, ctx, name: str, new_name: str):
+        """
+        Renames a filter
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = name.lower()
+        new_name = new_name.lower()
+        name_check = self.check_name(ctx, new_name)
+
+        if not (settings and settings.get_filter(name)):
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        if name_check:
+            await self.bot.say(name_check)
+            return
+
+        try:
+            settings.rename_filter(name, new_name)
+        except Exception as e:
+            await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+            return
+
+        self.save()
+        await self.bot.say(info("Successfully renamed '%s' to '%s'." % (name, new_name)))
+
+    @recensor.group(pass_context=True, name='server')
+    async def recensor_server(self, ctx):
+        """
+        Show or configure server settings
+
+        If no subcommand is provided, invokes [p]recensor show server
+        """
         if ctx.invoked_subcommand is None:
             await self.bot.send_cmd_help(ctx)
+        elif ctx.invoked_subcommand is self.recensor_server:
+            ctx.view = StringView('SERVER')
+            await self.recensor_list.invoke(ctx)
 
-    @recensor.command(pass_context=True, name='list')
-    async def _list(self, ctx, channel: discord.Channel=None):
-        """Lists regexes used to filter messages.
-        Channel listing includes global patterns."""
+    @recensor_server.command(pass_context=True, name='priv-exempt')
+    async def recensor_server_priv_exempt(self, ctx, priv_exempt: bool = None):
+        """
+        Configures privileged user exemption
+
+        This setting acts as the default for when a filter's priv_exempt
+        this parameter is set to 'inherit'. If enabled, the server owner,
+        moderator role and admin role (according to [p]set) are ignored by
+        the filter.
+        """
         server = ctx.message.server
+        settings = self.settings.get(server.id)
 
-        if not self._re_present(server):
-            await self.bot.say('There are no filter patterns set for this server.')
-            return
+        if type(priv_exempt) not in (bool, type(None)):
+            priv_exempt = await ctx.command.do_conversion(ctx, bool, priv_exempt)
 
-        table = ' | '.join(['mode', 'pattern']) + '\n'  # header
+        if not settings:
+            self.settings[server.id] = settings = ServerConfig(self)
+            self.save()
 
-        for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS and self._re_present(server):
-                    table += '\nServer-wide:\n'
-
-            elif (channel and channel.id == c) or not channel:
-                if channel:
-                    ch_obj = channel
-                else:
-                    ch_obj = self.bot.get_channel(c)
-
-                if ch_obj is None:
-                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
-
-                if self._re_present(ch_obj):
-                    table += '\n#' + ch_obj.name + '\n'
-
-            for regex, mode in self.regexen[server.id][c].items():
-                table += ' | '.join([mode, regex]) + '\n'
-
-        await self.bot.say('```py\n' + table + '```')
-
-    @recensor.command(pass_context=True, name='add')
-    async def _add(self, ctx, pattern: str, mode: str=MODE.INCLUSIVE, channel: discord.Channel=None):
-        """Adds a pattern to filter messages. Mods, bot admins, and the bot's
-        owner are not subjected to the filter.
-        If the pattern contains spaces, it must be put in double quotes. Single quotes will not work.
-
-        mode is one of:
-        incl: Default, filter messages that match the pattern
-        excl: filter non-matching, only one allowed per channel or server
-        none: adds pattern to storage but doesn't apply filtering. Use recensor set to enable.
-
-        To use channel, mode must also be specified. If channel is not specified,
-        the filter is used across the entire server."""
-        server = ctx.message.server
-
-        if server.id not in self.regexen:
-            self.regexen[server.id] = {}
-
-        if pattern.startswith("'"):
-            await self.bot.say("Patterns cannot be specified within single quotes.")
-            return
-
-        if mode not in MODES:
-            await self.bot.say('"%s" is not a valid mode. You must specify one of `%s`.' % (mode, '`, `'.join(MODES)))
-            return
-        if mode == MODE.EXCLUSIVE:
-            if ALL_CHANNELS in self._ls_excl(server):
-                await self.bot.say("There is already a server-wide exclusive filter. Remove or disable it first.")
-                return
-
-            if channel and channel.id in self._ls_excl(server):
-                await self.bot.say("That channel already has an exclusive filter. Remove or disable it first.")
-                return
-
-        cid = channel.id if channel else ALL_CHANNELS
-        if cid not in self.regexen[server.id]:
-            self.regexen[server.id][cid] = {}
-
-        self.regexen[server.id][cid][pattern] = mode
-        await self.bot.say('Pattern added.')
-        dataIO.save_json(JSON_PATH, self.regexen)
-
-    @recensor.command(pass_context=True, name='set')
-    async def _set(self, ctx, mode: str, channel: discord.Channel=None):
-        """Lists regexes used to filter messages"""
-        server = ctx.message.server
-
-        if not self._re_present(server):
-            await self.bot.say('There are no patterns in the server to modify.')
-            return
-        if mode not in MODES:
-            self.bot.reply('"%s" is not a valid mode. You must specify one of `%s`.') % (mode, '`, `'.join(MODES))
-
-        if mode == MODE.EXCLUSIVE:
-            if ALL_CHANNELS in self._ls_excl(server):
-                await self.bot.say("There is already a server-wide exclusive filter. Remove or disable it first.")
-                return
-            if channel and channel.id in self._ls_excl(server):
-                await self.bot.say("That channel already has an exclusive filter. Remove or disable it first.")
-                return
-
-        re_list = {}
-        i = 1
-        table = ' | '.join(['#'.ljust(4), 'mode', 'pattern']) + '\n'  # header
-        for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS and self._re_present(server):
-                    table += '\nServer-wide:\n'
-            elif (channel and channel.id == c) or not channel:
-                if channel:
-                    ch_obj = channel
-                else:
-                    ch_obj = self.bot.get_channel(c)
-
-                if ch_obj is None:
-                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
-                if self._re_present(ch_obj):
-                    table += '\n#' + ch_obj.name + '\n'
-
-            for regex, oldmode in self.regexen[server.id][c].items():
-                table += ' | '.join([str(i).ljust(4), oldmode, regex]) + '\n'
-                re_list[str(i)] = (server.id, c, regex, oldmode)
-                i += 1
-
-        prompt = 'Choose the number of the pattern to set to `%s`:\n' % mode
-        await self.bot.say(prompt + '```py\n' + table + '```')
-
-        msg = await self.bot.wait_for_message(author=ctx.message.author, timeout=15)
-        if msg is None:
-            await self.bot.say('Timed out waiting for a response.')
-
-        msg = msg.content.strip()
-        if msg in re_list:
-            sid, cid, regex, _ = re_list[msg]
-            self.regexen[sid][cid][regex] = mode
-            await self.bot.say('Mode set.')
-            dataIO.save_json(JSON_PATH, self.regexen)
-
-    @recensor.command(pass_context=True, name='del')
-    async def _del(self, ctx, channel: discord.Channel=None):
-        """Lists regexes used to filter messages"""
-        server = ctx.message.server
-
-        if not self._re_present(server):
-            await self.bot.say('There are no filter patterns set for this server.')
-            return
-
-        re_list = {}
-        i = 1
-        table = ' | '.join(['#'.ljust(4), 'mode', 'pattern']) + '\n'  # header
-        for c in self.regexen[server.id]:
-            if c == ALL_CHANNELS and self._re_present(server):
-                    table += '\nServer-wide:\n'
-            elif (channel and channel.id == c) or not channel:
-                if channel:
-                    ch_obj = channel
-                else:
-                    ch_obj = self.bot.get_channel(c)
-
-                if ch_obj is None:
-                    table += '\n' + 'Channel ID %s (deleted):' % c + '\n'
-
-                if self._re_present(ch_obj):
-                    table += '\n#' + ch_obj.name + '\n'
-
-            for regex, mode in self.regexen[server.id][c].items():
-                table += ' | '.join([str(i).ljust(4), mode, regex]) + '\n'
-                re_list[str(i)] = (server.id, c, regex)
-                i += 1
-
-        prompt = 'Choose the number of the pattern to delete:\n'
-        await self.bot.say(prompt + '```py\n' + table + '```')
-        msg = await self.bot.wait_for_message(author=ctx.message.author, timeout=15)
-        if msg is None:
-            await self.bot.say('Timed out waiting for a response.')
-
-        msg = msg.content.strip()
-        if msg in re_list:
-            sid, cid, regex = re_list[msg]
-            del(self.regexen[sid][cid][regex])
-            await self.bot.say('Pattern removed.')
-
-        dataIO.save_json(JSON_PATH, self.regexen)
-
-    @recensor.command(pass_context=True, name='exemptions')
-    @checks.admin()
-    async def _exemptions(self, ctx, on_off: bool = None):
-        """Configure whether mods and admins are immune to the filter in the server (default yes)."""
-        sid = ctx.message.server.id
-        current = not self.regexen.get(sid, {}).get('no_exemptions', False)
-
-        if on_off is None:
-            adj = 'enabled' if current else 'disabled'
-            await self.bot.say('Exemptions are currently %s.' % adj)
-            return
-
-        adj = 'enabled' if on_off else 'disabled'
-        if on_off == current:
-            await self.bot.say('Exemptions were already %s.' % adj)
+        if priv_exempt is None:
+            priv_exempt = settings.priv_exempt
+            adj = 'currently'
+        elif settings.priv_exempt == priv_exempt:
+            adj = 'already'
         else:
-            if sid not in self.regexen:
-                self.regexen[sid] = {}
+            adj = 'now'
+            settings.priv_exempt = priv_exempt
+            self.save()
 
-            self.regexen[sid]['no_exemptions'] = not on_off
-            await self.bot.say('Exemptions %s.' % adj)
+        desc = 'enabled' if priv_exempt else 'disabled'
+        await self.bot.say('Server-wide privilege user exemption for is %s %s by default.' % (adj, desc))
 
-        dataIO.save_json(JSON_PATH, self.regexen)
+    @recensor_server.command(pass_context=True, name='channels')
+    async def recensor_server_channels(self, ctx, operation: str = None, *options):
+        """
+        Configures the server-wide channels list
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
 
-    def immune_from_filter(self, message):
-        """Tests message to see if it is exempt from filter. Taken from mod.py"""
-        user = message.author
-        server = message.server
+        if not settings:
+            self.settings[server.id] = settings = ServerConfig(self)
+            self.save()
+        elif not operation:
+            ctx.view = StringView('SERVER')
+            await self.recensor_list.invoke(ctx)
+
+        await self._list_command_main(ctx, settings, 'channels_list', operation, *options)
+
+    @recensor_server.command(pass_context=True, name='roles')
+    async def recensor_server_roles(self, ctx, operation: str = None, *options):
+        """
+        Configure the server-wide roles list
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+
+        if not settings:
+            self.settings[server.id] = settings = ServerConfig(self)
+            self.save()
+        elif not operation:
+            ctx.view = StringView('SERVER')
+            await self.recensor_list.invoke(ctx)
+
+        await self._list_command_main(ctx, settings, 'roles_list', operation, *options)
+
+    @recensor.group(pass_context=True, name='set', hidden=True, invoke_without_command=True, rest_is_raw=True)
+    async def recensor_set(self, ctx, filter_name: str, setting_name: str = None, *, options):
+        """
+        Configures filter parameters
+
+        If a filter name is is provided but no setting, invokes [p]recensor show filter_name.
+        If filter_name is 'server', redirect to [p]recensor server
+        Otherwise, if a filter name and subcommand are provided, invokes that subcommand.
+        """
+        if filter_name.lower() == 'server':
+            new_view = []
+
+            if setting_name:
+                new_cmd = self.recensor_server
+                new_view.append(setting_name)
+            else:
+                new_cmd = self.recensor_list
+                new_view.append('SERVER')
+
+            if options:
+                new_view.append(options)
+
+            ctx.view = StringView(' '.join(new_view))
+            return await new_cmd.invoke(ctx)
+        else:
+            settings = self.settings.get(ctx.message.server.id)
+            if not (settings and settings.get_filter(filter_name)):
+                return await self.bot.send_cmd_help(ctx)
+
+        if setting_name in [None, self.recensor_list.name, *self.recensor_list.aliases]:
+            ctx.view = StringView('"%s"' % filter_name)
+            return await self.recensor_list.invoke(ctx)
+        elif setting_name in self.recensor_set.commands:
+            new_view = '"%s"' % filter_name
+
+            if options:
+                new_view += ' ' + options
+
+            ctx.view = StringView(new_view)
+            return await self.recensor_set.commands[setting_name].invoke(ctx)
+        else:
+            return await self.bot.send_cmd_help(ctx)
+
+    @recensor_set.command(pass_context=True, name='enabled')
+    async def recensor_set_enabled(self, ctx, filter_name: str, enabled: bool = None):
+        """
+        Show/set filter enabled/active toggle
+
+        enabled must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(enabled) not in (bool, type(None)):
+            enabled = await ctx.command.do_conversion(ctx, bool, enabled)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif enabled is None:
+            enabled = _filter.enabled
+            adj = 'currently'
+        elif _filter.enabled == enabled:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.enabled = enabled
+            settings.update_order()
+            self.save()
+
+        desc = 'enabled' if enabled else 'disabled'
+        await self.bot.say('%s is %s %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='override')
+    async def recensor_set_override(self, ctx, filter_name: str, override: bool = None):
+        """
+        Show/set filter override/priority toggle
+
+        override must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(override) not in (bool, type(None)):
+            override = await ctx.command.do_conversion(ctx, bool, override)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif override is None:
+            override = _filter.override
+            adj = 'currently'
+        elif _filter.override == override:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.override = override
+            settings.update_order()
+            self.save()
+
+        desc = 'enabled' if override else 'disabled'
+        await self.bot.say('Filter override for %s is %s %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='priv-exempt')
+    async def recensor_set_priv_exempt(self, ctx, filter_name: str, priv_exempt: bool = None):
+        """
+        Show/set filter privileged user exemption toggle
+
+        priv_exempt must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(priv_exempt) not in (bool, type(None)):
+            priv_exempt = await ctx.command.do_conversion(ctx, bool, priv_exempt)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif priv_exempt is None:
+            priv_exempt = _filter.priv_exempt
+            adj = 'currently'
+        elif _filter.priv_exempt == priv_exempt:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.priv_exempt = priv_exempt
+            self.save()
+
+        desc = 'enabled' if priv_exempt else 'disabled'
+        await self.bot.say('Privilege user exemption for %s is %s %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='mode')
+    async def recensor_set_mode(self, ctx, filter_name: str, mode: str = None):
+        """
+        Show/set filter matching mode
+
+        mode must be blacklist, whitelist, or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if mode.lower().startswith('black'):
+            mode = False
+        elif mode.lower().startswith('white'):
+            mode = True
+        else:
+            await self.bot.send_cmd_help(ctx)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif mode is None:
+            mode = _filter.mode
+            adj = 'currently'
+        elif _filter.mode == mode:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.mode = mode
+            settings.update_order()
+            self.save()
+
+        desc = 'DO' if mode else 'do NOT'
+        await self.bot.say('%s is %s set to only allow messages that %s match the pattern.'
+                           % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='position')
+    async def recensor_set_position(self, ctx, filter_name: str, position: str = None):
+        """
+        Configures a filter's matching position
+
+        Position must be one of the following (or left blank to show the current value):
+        - start:    only looks at the beginning of the message
+        - anywhere: scans through the full message looking for a match
+        - full:     the entire message must match, from start to finish
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        try:
+            position = position and POSITION(position)
+        except ValueError:
+            await self.bot.send_cmd_help(ctx)
+
+        if position is None:
+            position = _filter.position
+            adj = 'currently'
+        elif _filter.position == position:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.position = position
+            self.save()
+
+        if position is POSITION.START:
+            desc = 'only at the beginning of the message'
+        elif position is POSITION.FULL:
+            desc = 'the entire message from start to finish'
+        elif position is POSITION.ANYWHERE:
+            desc = 'anywhere in the message'
+        else:
+            raise ValueError("Unhandled position value, please report this bug.")
+
+        await self.bot.say('%s is %s set to match %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='flags')
+    async def recensor_set_flags(self, ctx, filter_name: str, *, flags: str = None):
+        """
+        Configures a filter's regex flags
+
+        Python's regex flags are documented here:
+        https://docs.python.org/3/howto/regex.html#compilation-flags
+
+        flags must be a combination of the following (or left blank to show the current setting):
+        - A: Perform ASCII-only matching instead of Unicode matching
+        - I: Do case-insensitive matches
+        - L: Do a locale-aware match (depends on bot host's locale)
+        - M: Make ^ and $ match line start/end instead of the whole message
+        - S: Make . match any character, including newlines
+        - X: Ignore ALL whitespace and #comments in the pattern (for readability)
+
+        Any other characters are ignored.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        flags = flags and ''.join(sorted(set(flags.upper()).intersection(FLAGS_DESC)))
+
+        if flags is None:
+            flags = _filter.flags
+            adj = 'currently'
+        elif _filter.flags == flags:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.flags = flags
+            _filter.rebuild_predicate()
+            self.save()
+
+        if flags:
+            desc = ':\n' + '\n'.join('`%c` - %s' % (k, FLAGS_DESC[k]) for k in flags)
+        else:
+            desc = ' empty.'
+
+        await self.bot.say('Flags for %s are %s%s' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='pattern', rest_is_raw=True)
+    async def recensor_set_pattern(self, ctx, filter_name: str, *, pattern):
+        """
+        Configures a filter's pattern
+
+        Regex how to:
+        https://docs.python.org/3/howto/regex.html#regex-howto
+
+        Full syntax documentation:
+        https://docs.python.org/3/library/re.html#regular-expression-syntax
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+        pattern = pattern.strip()
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        if not pattern:
+            pattern = _filter.pattern
+            desc = 'is currently:\n' + box(pattern)
+        else:
+            try:
+                re.compile(pattern, flags_to_int(_filter.flags))
+            except Exception as e:
+                await self.bot.say(error("Error compiling regular expression:\n") +
+                                   box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                return
+
+            desc = 'set.'
+            _filter.pattern = pattern
+            _filter.rebuild_predicate()
+            self.save()
+
+        await self.bot.say('Pattern for %s %s' % (_filter.name, desc))
+
+    @recensor_set.command(pass_context=True, name='channels')
+    async def recensor_set_channels(self, ctx, filter_name: str, operation: str = None, *options):
+        """
+        Configure a filter's channels list
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif not operation:
+            ctx.view = StringView(filter_name)
+            await self.recensor_list.invoke(ctx)
+
+        await self._list_command_main(ctx, _filter, 'channels_list', operation, *options)
+
+    @recensor_set.command(pass_context=True, name='roles')
+    async def recensor_set_roles(self, ctx, filter_name: str, operation: str = None, *options):
+        """
+        Configure a filter's roles list
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif not operation:
+            ctx.view = StringView(filter_name)
+            await self.recensor_list.invoke(ctx)
+
+        await self._list_command_main(ctx, _filter, 'roles_list', operation, *options)
+
+    @recensor.command(pass_context=True, name='test')
+    async def recensor_test(self, ctx, filter_name: str = None):
+        """
+        Interactively tests a single filter
+
+        Testing does not take role, channel or priv_exempt into account, only mode, pattern and flags.
+        The cog will not filter any of your messages in the channel while testing is active.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+        already_testing = self._ignore_filters.get((ctx.message.channel.id, ctx.message.author.id))
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif already_testing:
+            desc = 'that' if already_testing is _filter else ('the %s filter' % already_testing.name)
+            await self.bot.say(warning('You are already testing %s filter in this channel!' % desc))
+            return
+
+        await self.bot.reply("I will respond to your messages with whether the message matched the %s filter and what "
+                             "action would be taken as a result.\n\nAny changes to the filter's mode, pattern or flags "
+                             "take effect immediately. Testing will stop when you post `stop test` or after 5 minutes "
+                             "of no messages." % _filter.name)
+
+        self._ignore_filters[(ctx.message.channel.id, ctx.message.author.id)] = _filter
+
+        while True:
+            msg = await self.bot.wait_for_message(author=ctx.message.author,
+                                                  channel=ctx.message.channel,
+                                                  timeout=5 * 60)
+
+            if msg is None:
+                await self.bot.reply('testing for %s stopped due to inactivity.' % _filter.name)
+                break
+            elif msg.content.lower().strip('\'"` ') == 'stop test':
+                await self.bot.say('Testing stopped.')
+                break
+
+            match = await self.bot.loop.run_in_executor(self.executor, _filter.predicate, msg.content)
+            wl_msg = 'Your message will not be deleted because it matched and the filter is in whitelist mode.'
+            bl_msg = 'Your message will be deleted because it matched and the filter is in blacklist mode.'
+
+            if _filter.override:
+                if match:
+                    if _filter.mode:
+                        action = wl_msg + ' Since this is an override filter, no further checks will be made.'
+                    else:
+                        action = bl_msg + ("Since this is an override filter, it won't matter if it matches any "
+                                           "applicable (non-override) whitelist-mode filters.")
+                else:
+                    if _filter.mode:
+                        action = ("Your message *might* be deleted because it did not match this whitelist mode filter."
+                                  " If it matches another applicable whitelist filter, it will be allowed.")
+                    else:
+                        action = ("Your message will not be deleted because it does not match the filter and it is in "
+                                  "blacklist mode.")
+            elif match and not _filter.mode:
+                action = bl_msg
+            elif _filter.mode:
+                if match:
+                    action = wl_msg
+                else:
+                    action = ('Your message *might* be deleted because it did not match this whitelist mode filter. '
+                              'If it matches another applicable whitelist filter, it will be allowed.')
+            else:
+                action = "Your message will not be deleted because it didn't match and the filter is in blacklist mode."
+
+            await self.bot.say(action)
+
+        self._ignore_filters.pop((ctx.message.channel.id, ctx.message.author.id), None)
+
+    @recensor.command(pass_context=True, name='regex101', aliases=['101'], rest_is_raw=True)
+    async def recensor_regex101(self, ctx, filter_name: str = None, *, test_message: str = None):
+        """
+        Posts a link to open a filter's pattern on regex101.com
+
+        If a test message is given, it will be pre-filled.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+        test_message = test_message.lstrip(' ')  # rest_is_raw includes the space for whatever reason
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+
+        url = "https://regex101.com/?regex={}&flags={}&flavor=python"
+        url = url.format(urllib.parse.quote(_filter.pattern), _filter.flags.lower())
+
+        if test_message:
+            url += '&testString={}'.format(urllib.parse.quote(test_message))
+
+        await self.bot.say('Here is your link: <%s>' % url)
+
+    # List operation stuff
+
+    async def _list_command_transform_arg(self, ctx, _list, param, argument):
+        if param.annotation is ItemTypeReference:
+            converter = _list.item_type
+        elif issubclass(param.annotation, FilterBase):
+            argument = argument.lower().strip("'` ")
+            settings = self.settings.get(ctx.message.server.id)
+            list_owner = settings if argument == 'server' else settings.get_filter(argument)
+
+            if list_owner is settings and param.annotation is FilterList:
+                raise BadArgument("Only other filters may be specified.")
+            elif not list_owner:
+                raise BadArgument('There is no filter named "%s" in this server.' % argument)
+
+            return list_owner
+        else:
+            converter = param.annotation
+            if converter is param.empty:
+                if param.default is not param.empty:
+                    converter = str if param.default is None else type(param.default)
+                else:
+                    converter = str
+            elif not inspect.isclass(type(converter)):
+                raise discord.ClientException('Function annotation must be a type')
+
+        try:
+            return await ctx.command.do_conversion(ctx, converter, argument)
+        except BadArgument as e:
+            raise e
+        except Exception as e:
+            raise BadArgument('Converting "{0}" to `{1.__name__}` failed.'.format(argument, converter)) from e
+
+    async def _list_command_parse_args(self, ctx, _list, operation, func, options):
+        params = list(inspect.signature(func).parameters.values())[3:]
+        options_iter = iter(options)
+        args = []
+
+        # Some basic validation/conversion
+        fail_msg = None
+
+        if options and not params:
+            fail_msg = "The `%s` operation doesn't take any arguments." % operation
+        else:
+            for param in params:
+                try:
+                    arg = next(options_iter)
+                    arg = await self._list_command_transform_arg(ctx, _list, param, arg)
+                except StopIteration:
+                    if param.default is param.empty and param.kind is not param.VAR_POSITIONAL:
+                        fail_msg = 'The `{0}` operation requires the `{1.name}` argument.'.format(operation, param)
+                    break
+                except BadArgument as e:
+                    fail_msg = e.args[0]
+                    break
+                except Exception as e:
+                    fail_msg = error("Unhandled error converting `%s` parameter:\n" % param.name) + \
+                               box('{0.__class__.__name__}: '.format(e) +
+                                   ', '.join((x if type(x) is str else repr(x)) for x in e.args))
+                    break
+
+                args.append(arg)
+
+        remaining = list(options_iter)
+
+        if remaining and not fail_msg:
+            if params[-1].kind is inspect.Parameter.VAR_POSITIONAL:
+                try:
+                    for argument in remaining:
+                        args.append(await self._list_command_transform_arg(ctx, _list, params[-1], argument))
+                except BadArgument as e:
+                    fail_msg = e.args[0]
+            else:
+                fail_msg = "Too many arguments for the `%s` operation (it only takes %i)." % (operation, len(params))
+
+        return args, fail_msg
+
+    async def _list_command_main(self, ctx, parent: FilterBase, list_name: str, operation: str = None, *options):
+        try:
+            _list = getattr(parent, list_name)
+        except AttributeError:
+            await self.bot.say(error("%r has no `%s` attribute! Please report this bug." % (parent, list_name)))
+            return
+
+        if not operation:
+            msg = warning("No list operation specified. Available operations:")
+            await self._list_command_showhelp(ctx, parent, _list, msg=msg, show_all=True)
+            return
+
+        try:
+            func = self._list_functions[operation.lower()]
+        except KeyError:
+            msg = error("Unknown operation: '%s'. Available operations:" % operation)
+            await self._list_command_showhelp(ctx, parent, _list, msg=msg, show_all=True)
+            return
+
+        args, fail_msg = await self._list_command_parse_args(ctx, _list, operation, func, options)
+
+        if fail_msg:
+            await self._list_command_showhelp(ctx, parent, _list, operation=operation, msg=error(fail_msg))
+            return
+
+        return await func(ctx, parent, _list, *args)
+
+    async def _list_command_showhelp(self, ctx, parent, _list: FilterList, *, operation: Optional[str] = None,
+                                     msg: Optional[str] = None, show_all=False, show_fullhelp=False):
+
+        if msg:
+            reply = msg + '\n'
+        else:
+            reply = ""
+
+        if show_all:
+            operations = self._list_functions.keys()
+        elif operation:
+            operations = [operation]
+            show_fullhelp = True
+        else:
+            operations = []
+
+        texts = OrderedDict()
+
+        for op in operations:
+            func = self._list_functions[op]
+            cmdline = [op]
+
+            if show_fullhelp:
+                params = list(inspect.signature(func).parameters.values())[3:]
+
+                for param in params:
+                    if param.kind is param.VAR_POSITIONAL:
+                        param_desc = "{0.name}..."
+                    elif param.default not in [None, param.empty]:
+                        param_desc = "{0.name}={0.default}"
+                    else:
+                        param_desc = "{0.name}"
+
+                    param_desc = ("<{0}>" if param.default is param.empty else "[{0}]").format(param_desc)
+                    cmdline.append(param_desc.format(param))
+
+            cmdline = ' '.join(cmdline)
+            func_doc = inspect.getdoc(func)
+
+            texts[cmdline] = func_doc
+
+        if show_fullhelp:
+            sections = ['%s\n\n%s' % t for t in texts.items()]
+            reply += box('\n\n--------\n\n'.join(sections))
+        else:
+            cmd_maxlen = max(len(k) for k in texts)
+            lines = [c.ljust(cmd_maxlen) + ' : ' + d.split('\n')[0] for c, d in texts.items()]
+            reply += box('\n'.join(lines))
+
+        await self.bot.say(reply)
+
+    async def _list_command_help(self, ctx, parent, _list, operation: str = None):
+        """
+        Displays help for all or one operation(s)
+        """
+        show_all = False
+        if operation in self._list_functions:
+            msg = "Help for %s:" % operation
+        elif operation:
+            msg = error("Unknown operation: '%s'. Available operations:" % operation)
+            operation = None
+            show_all = True
+        else:
+            msg = 'Available operations:'
+            show_all = True
+
+        await self._list_command_showhelp(ctx, parent, _list, operation=operation, msg=msg, show_all=show_all)
+
+    async def _list_command_enabled(self, ctx, parent, _list, enabled: bool = None):
+        """
+        Sets whether the list is enabled or not
+
+        If a list is disabled, it will be skipped when filtering messages.
+        However, if overlay is on, the server-wide list will still be checked.
+        """
+        if enabled is None:
+            adj = 'currently'
+            enabled = _list.enabled
+        elif _list.enabled == enabled:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+
+            _list.enabled = enabled
+            self.save()
+
+        await self.bot.say('List is %s %s.' % (adj, 'enabled' if enabled else 'disabled'))
+
+    async def _list_command_mode(self, ctx, parent, _list, mode: str = None):
+        """
+        Set whether the list is a blacklist or whitelist
+
+        Mode must be 'blacklist' or 'whitelist'.
+        """
+        if mode is not None:
+            mode = mode.lower().strip("' `")
+
+            if mode.lower().startswith('black'):
+                mode = False
+            elif mode.lower().startswith('white'):
+                mode = True
+            else:
+                await self.bot.say(error("Argument must be `blacklist` or `whitelist`."))
+                return
+
+        if mode is None:
+            adj = 'currently'
+            mode = _list.mode
+        elif _list.mode == mode:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+
+            _list.mode = mode
+            self.save()
+
+        await self.bot.say('Mode is %s %s.' % (adj, 'whitelist' if mode else 'blacklist'))
+
+    async def _list_command_overlay(self, ctx, parent, _list, overlay: bool = None):
+        """
+        Set whether the list "overlays" the server-wide one
+        """
+        if isinstance(parent, ServerConfig):
+            await self.bot.say('The server-wide list does not support the overlay setting.')
+            return
+        elif overlay is None:
+            adj = 'currently'
+            overlay = _list.overlay
+        elif _list.overlay == overlay:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+
+            _list.overlay = overlay
+            self.save()
+
+        await self.bot.say('Overlay mode is %s %s.' % (adj, 'enabled' if overlay else 'disabled (standalone)'))
+
+    async def _list_command_link(self, ctx, parent, _list, other_filter: Filter):
+        """
+        Makes the list a reference to another filter's
+
+        WARNING: erases old configuration!
+        """
+        if _list.parent is not parent:
+            await self.bot.say(error("Already linked."))
+        elif isinstance(parent, ServerConfig):
+            await self.bot.say(error("Cannot link a server-wide list."))
+        elif parent is other_filter:
+            await self.bot.say(error("Cannot link a list to itself."))
+        elif await self.confirm_thing(ctx, thing="replace this list with a link to %s's" % other_filter.name,
+                                      require_yn=True):
+            try:
+                parent.parent.make_link(parent, other_filter, _list.whoami)
+            except TypeError as e:
+                await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+            except Exception as e:
+                await self.bot.say(error("Error linking:\n") +
+                                   box('{0.__class__.__name__}: '.format(e) +
+                                       ', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+
+            self.save()
+            await self.bot.say("List linked.")
+
+    async def _list_command_unlink(self, ctx, parent, _list):
+        """
+        Makes a list a standalone, independent copy of its link target
+        """
+        if _list.parent is parent:
+            await self.bot.say(error("Not linked."))
+        else:
+            try:
+                parent.parent.break_link(parent, _list.whoami, copy=True)
+            except TypeError as e:
+                await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+            except Exception as e:
+                await self.bot.say(error("Error unlinking:\n") +
+                                   box('{0.__class__.__name__}: '.format(e) +
+                                       ', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+
+            self.save()
+            await self.bot.say("List unlinked and replaced with a copy of the former link target.")
+
+    async def _list_command_add(self, ctx, parent, _list, *items: ItemTypeReference):
+        """
+        Adds one or more items to the list
+        """
+        extra = ''
+
+        if _list.item_type is discord.Channel:
+            x = [c for c in items if c.type is discord.ChannelType.text]
+            if len(x) != len(items):
+                extra = ' Provided voice channels were ignored.'
+
+        updated_items = _list.items.union(x.id for x in items)
+        num_added = len(updated_items) - len(_list.items)
+
+        if not items:
+            await self.bot.say("No items specified to add.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation didn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('Added %i item(s).%s' % (num_added, extra))
+
+    async def _list_command_remove(self, ctx, parent, _list, *items: ItemTypeReference):
+        """
+        Removes one or more items from the list
+        """
+        updated_items = _list.items.difference(x.id for x in items)
+        num_removed = len(_list.items) - len(updated_items)
+
+        if not items:
+            await self.bot.say("No items specified to remove.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation didn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('Removed %i item(s).' % num_removed)
+
+    async def _list_command_cleanup(self, ctx, parent, _list):
+        """
+        Removes references to deleted items from the list
+        """
+        getter = ITEM_LOOKUP_GETTERS.get(_list.item_type)
+
+        if not getter:
+            await self.bot.say(error("Unable to find lookup for {0.__name__}! "
+                                     "Please report this bug.".format(_list.item_type)))
+        elif not getter(ctx):
+            await self.bot.say(error("Unable to lookup {0.__name__} items in this context! "
+                                     "Please report this bug.".format(_list.item_type)))
+        else:
+            to_remove = set()
+
+            for item_id in _list.items:
+                if not getter(ctx)(item_id):
+                    to_remove.add(item_id)
+
+            if to_remove:
+                _list.items -= to_remove
+                self.save()
+                await self.bot.say('Removed %i references to deleted items.' % len(to_remove))
+            else:
+                await self.bot.say('Nothing to remove.')
+
+    async def _list_command_invert(self, ctx, parent, _list):
+        """
+        Replaces the contents of the list with all items that aren't in the list
+
+        This operation respects the overlay setting.
+        """
+        getter = ITEM_LIST_GETTERS.get(_list.item_type)
+
+        if not getter:
+            await self.bot.say(error("Unable to find lookup for {0.__name__}! "
+                                     "Please report this bug.".format(_list.item_type)))
+        elif not getter(ctx):
+            await self.bot.say(error("Unable to lookup {0.__name__} items in this context! "
+                                     "Please report this bug.".format(_list.item_type)))
+        else:
+            items = getter(ctx)
+            new_id_list = set()
+
+            for item in items:
+                if item in _list:
+                    continue
+                elif _list.item_type is discord.Channel and item.type is not discord.ChannelType.text:
+                    continue
+                new_id_list.add(item.id)
+
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, new_id_list):
+                _list.items.clear()
+                _list.items.update(new_id_list)
+                self.save()
+                await self.bot.say('List inverted.')
+
+    async def _list_command_clear(self, ctx, parent, _list):
+        """
+        Removes ALL items from the list (doesn't reset mode or disable)
+        """
+
+        if not _list.items:
+            await self.bot.say("List is already empty.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self.confirm_thing(ctx, thing="clear this list?", require_yn=True):
+                _list.items.clear()
+                self.save()
+                await self.bot.say('List cleared.')
+
+    async def _list_command_replace(self, ctx, parent, _list, other_filter: FilterBase):
+        """
+        Replaces the contents of a list with another's
+        """
+        other_list = getattr(other_filter, _list.whoami)
+        if _list is other_list:
+            await self.bot.say("There's no reason to replace a list with itself.")
+        elif _list.items == other_list.items:
+            await self.bot.say("Lists are already identical.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, other_list.items):
+                _list.items.clear()
+                _list.items.update(other_list.items)
+                self.save()
+                await self.bot.say('List updated.')
+
+    async def _list_command_union(self, ctx, parent, _list, other_filter: FilterBase):
+        """
+        Like replace, but only adds new items
+        """
+        other_list = getattr(other_filter, _list.whoami)
+        updated_items = _list.items | other_list.items
+
+        if _list is other_list:
+            await self.bot.say("A list's union with itself is itself, doing nothing.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation wouldn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('List updated.')
+
+    async def _list_command_difference(self, ctx, parent, _list, other_filter: FilterBase):
+        """
+        Removes any items that are in the other list
+        """
+        other_list = getattr(other_filter, _list.whoami)
+        updated_items = _list.items - other_list.items
+
+        if _list is other_list:
+            await self.bot.say("A list's difference with itself is empty; use the `clear` operation.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation wouldn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('List updated.')
+
+    async def _list_command_intersect(self, ctx, parent, _list, other_filter: FilterBase):
+        """
+        Removes any items that are NOT also in the other list
+        """
+        other_list = getattr(other_filter, _list.whoami)
+        updated_items = _list.items & other_list.items
+
+        if _list is other_list:
+            await self.bot.say("A list's intersection with itself is itself, doing nothing.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation wouldn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('List updated.')
+
+    async def _list_command_symdiff(self, ctx, parent, _list, other_filter: FilterBase):
+        """
+        Replaces the list with items that are in EITHER list, but NOT both
+        """
+        other_list = getattr(other_filter, _list.whoami)
+        updated_items = _list.items ^ other_list.items
+
+        if _list is other_list:
+            await self.bot.say("A list's symmetric difference with itself is empty; use the `clear` operation.")
+        elif updated_items == _list.items:
+            await self.bot.say("That operation wouldn't affect the list.")
+        else:
+            _list = await self._list_command_confirm_linked(ctx, parent, _list)
+
+            if not _list:
+                return
+            elif await self._list_command_confirm_diff(ctx, _list, updated_items):
+                _list.items.clear()
+                _list.items.update(updated_items)
+                self.save()
+                await self.bot.say('List updated.')
+
+    async def _list_command_confirm_diff(self, ctx, _list, updated_items: set, *, title: str = "Updated list:"):
+        added = updated_items - _list.items
+        removed = _list.items - updated_items
+        nochange = _list.items & updated_items
+
+        mention_fmt = MENTIONS_BY_DATACLASS.get(_list.item_type, '#%s')
+        lines = []
+
+        for s, fmt in ((added, '`+ `%s'), (removed, '`- `~~%s~~'), (nochange, '`= `%s')):
+            lines.extend([(fmt % (mention_fmt % i)) for i in sorted(s)])
+
+        embed = discord.Embed(title=title, description='\n'.join(lines))
+        return await self.confirm_thing(ctx, confirm_msg="Are these changes correct?", require_yn=True, embed=embed)
+
+    async def _list_command_confirm_linked(self, ctx, parent: Filter, _list: FilterList) -> Optional[FilterList]:
+        if _list.parent is parent:
+            return _list
+
+        direct_parent = parent.links[_list.whoami]
+        ult_parent = _list.parent
+
+        if direct_parent is ult_parent:
+            target_desc = direct_parent.name
+        else:
+            target_desc = "{0.name}, which ultimately links to {1.name}".format(direct_parent, ult_parent)
+
+        await self.bot.say("This list is linked to {0}. Do you want to `copy` the list before changing it, `modify` "
+                           "{1.name}'s list directly, or `cancel`? (timeout in 30s)".format(target_desc, ult_parent))
+
+        while True:
+            reply = await self.bot.wait_for_message(channel=ctx.message.channel, author=ctx.message.author, timeout=30)
+
+            if reply is None:
+                await self.bot.say('Timed out waiting for a response.')
+                return None
+
+            reply = reply.content.strip(' `"\'').lower()
+
+            if reply == 'copy':
+                try:
+                    return parent.parent.break_link(parent, _list.whoami, copy=True)
+                except TypeError as e:
+                    await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                except Exception as e:
+                    await self.bot.say(error("Error unlinking:\n") +
+                                       box('{0.__class__.__name__}: '.format(e) +
+                                           ', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                return None
+            elif reply == 'modify':
+                return _list
+            elif reply == 'cancel':
+                await self.bot.say('Command cancelled')
+                return None
+            else:
+                await self.bot.say("Please only answer with `copy`, `modify`, or `cancel`.")
+
+    # Utility
+
+    def check_name(self, ctx, name):
+        name = name.lower()
+
+        if re.search(r'\s', name):
+            return warning('Name cannot contain whitespace.')
+        elif name in self.recensor.commands or any(name in c.aliases for c in self.recensor.commands.values()):
+            return warning('Name cannot be the same as any `%srecensor` subcommands or their aliases.' % ctx.prefix)
+        elif name in self.recensor_set.commands or any(name in c.aliases for c in self.recensor_set.commands.values()):
+            return warning('Name cannot be the same as any `%srecensor set` subcommands or their aliases.' % ctx.prefix)
+
+    async def confirm_thing(self, ctx, *, thing: Optional[str] = None, confirm_msg: Optional[str] = None,
+                            require_yn: bool = False, timeout: Optional[int] = 30, **kwargs):
+        if not confirm_msg:
+            if thing:
+                confirm_msg = warning('Are you sure you want to %s?' % thing)
+            else:
+                confirm_msg = warning('Are you sure?')
+
+        if not (isinstance(timeout, (int, float)) and timeout > 0) and timeout is not None:
+            raise ValueError('timeout parameter must be a number > 0 or None')
+        elif timeout:
+            confirm_msg += ' (reply `yes` within %is to confirm, `no` to cancel)' % timeout
+        else:
+            confirm_msg += ' (reply `yes` to confirm or `no` to cancel)'
+
+        await self.bot.say(confirm_msg, **kwargs)
+
+        while True:
+            reply = await self.bot.wait_for_message(channel=ctx.message.channel, author=ctx.message.author,
+                                                    timeout=timeout)
+
+            if reply is None:
+                await self.bot.say('Timed out waiting for a response.')
+                return None
+            elif reply.content.strip(' `"\'').lower() == 'yes':
+                return True
+            elif require_yn and reply.content.strip(' `"\'').lower() != 'no':
+                await self.bot.say("Please specify `yes` or `no`.")
+                continue
+            else:
+                await self.bot.say('Command cancelled.')
+                return False
+
+    def is_mod_or_superior(self, obj):  # Copied from red core mod.py
+        if not isinstance(obj, (discord.Message, discord.Member, discord.Role)):
+            raise TypeError('Only messages, members or roles may be passed')
+
+        server = obj.server
         admin_role = self.bot.settings.get_server_admin(server)
         mod_role = self.bot.settings.get_server_mod(server)
+
+        if isinstance(obj, discord.Role):
+            return obj.name in [admin_role, mod_role]
+        elif isinstance(obj, discord.Message):
+            user = obj.author
+        elif isinstance(obj, discord.Member):
+            user = obj
+        else:
+            return False
 
         if user.id == self.bot.settings.owner:
             return True
@@ -361,46 +2207,26 @@ class ReCensor:
             return True
         elif discord.utils.get(user.roles, name=mod_role):
             return True
-        else:
-            return False
+
+        return False
+
+    # Listeners
 
     async def on_message(self, message):
         # Fast checks
-        if message.channel.is_private or self.bot.user == message.author or self.unloading \
+        if message.channel.is_private or message.author == self.bot.user or not self.ready \
                                       or not isinstance(message.author, discord.Member):
+            return
+        elif (message.channel.id, message.author.id) in self._ignore_filters:
             return
 
         server = message.server
         sid = server.id
         can_delete = message.channel.permissions_for(server.me).manage_messages
 
-        if sid in self.regexen:
-
-            # Owner, admins and mods are immune to the filter unless configured otherwise
-            no_exemptions = self.regexen[sid].get('no_exemptions', False)
-            if not can_delete or (self.immune_from_filter(message) and not no_exemptions):
-                return
-
-            # compile list of patterns from global and channel
-            for key in (ALL_CHANNELS, message.channel.id):
-
-                # Iterate through patterns
-                for pattern, mode in self.regexen[sid].get(key, {}).items():
-
-                    # Skip disabled patterns
-                    if mode == MODE.DISABLED:
-                        continue
-
-                    regex = self.recache.get(pattern)
-                    if not regex:
-                        regex = re.compile(pattern)
-                        self.recache[pattern] = regex
-
-                    match = await self.bot.loop.run_in_executor(self.executor, check_match, regex, message.content)
-
-                    if (mode == MODE.EXCLUSIVE) != match:  # xor
-                        await self.bot.delete_message(message)
-                        return
+        if can_delete and sid in self.settings:
+            if await self.settings[sid].check_message(message):
+                await self.bot.delete_message(message)
 
     async def on_message_edit(self, old_message, new_message):
         await self.on_message(new_message)
@@ -408,6 +2234,7 @@ class ReCensor:
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
             self.analytics.command(ctx)
+
 
 def check_folder():
     if not os.path.exists(DATA_PATH):
@@ -418,11 +2245,39 @@ def check_folder():
 def check_file():
     if dataIO.is_valid_json(JSON_PATH) is False:
         log.debug('Creating json: %s' % JSON_PATH)
-        dataIO.save_json(JSON_PATH, {})
+        dataIO.save_json(JSON_PATH, {'_schema_version': 2})
+
+
+def migrate_data(data):
+    log.debug('Upgrading schema...')
+    newdata = {'_schema_version': 2, '_v1_backup': data}
+    for sid, sdata in data.items():
+        i = 0
+
+        newdata[sid] = {
+            'priv_exempt': not sdata.get('no_exemptions', False),
+            'filters': {}
+        }
+
+        for cid, cdata in sdata.items():
+            if type(cdata) is not dict:
+                continue
+
+            for pattern, mode in cdata.items():
+                name = 'migrated_%i' % i
+                mode = (mode == 'excl') if mode in {'incl', 'excl'} else False
+                enabled = (mode != 'none')
+                i += 1
+
+                newdata[sid]['filters'][name] = {'pattern': pattern, 'mode': mode, 'enabled': enabled}
+
+                if cid != 'all':
+                    newdata[sid]['filters'][name]['channels_list'] = {'enabled': True, 'mode': True, 'items': [cid]}
+
+    return newdata
 
 
 def setup(bot):
     check_folder()
     check_file()
-    n = ReCensor(bot)
-    bot.add_cog(n)
+    bot.add_cog(ReCensor(bot))

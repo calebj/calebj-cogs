@@ -52,7 +52,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * gallery: Automatically clean up comments in content-focused channels.
 * punish: Timed text+voice mute with anti-evasion, modlog cases, and more.
 * purgepins: Delete pin notification messages after a per-channel interval.
-* recensor: Create inclusive or exclusive regex filters per channel or server.
+* recensor: Filter messages using regular expressions
 * scheduler: Squid's [scheduler cog][squid_scheduler], with enhancements.
 * serverquotes: Store and recall memorable quotes for your server.
 * sinfo: Simple text dump of server and channel information.
@@ -160,11 +160,78 @@ It is possible to designate a special channel which punished users are allowed t
 Support for multi-line headers and cells was added in tabluate version 0.8.0. If the installed version is older than that, the formatting for `[p]punish list` will revert to a single-row layout, which can easily overflow and cause ugly formatting. To prevent this, simply update tabulate (a quick shortcut to do so is `[p]debug bot.pip_install('tabulate')`).
 
 ### How do I use recensor?
-The recensor cog uses Python's [`re.match()`](https://docs.python.org/3/library/re.html#re.match) to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is [here](https://docs.python.org/3/library/re.html#regular-expression-syntax). Unlike [`re.search()`](https://docs.python.org/3/library/re.html#re.search), the pattern matching is anchored to the beginning of the message text. If you want a pattern to match anywhere in the message, you must put `.*` at the beginning of the pattern.
+The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library/re.html) module to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is described [here](https://docs.python.org/3/library/re.html#regular-expression-syntax).
 
-The bot's owner, administrators and moderators are always immune from the filter.
+Most of the configuration will be done with the following commands:
+- `[p]recensor create <name> [pattern]` : creates a new filter
+- `[p]recensor test <name>` : interactively tests an existing filter
+- `[p]recensor regex101 [test message]` : opens a pattern in regex101.com with optional test message
+- `[p]recensor help` : displays links to reference material (such as this README)
+- `[p]recensor <name> [setting] [options]` : show or change a filter's settings (see below)
+- `[p]recensor server [setting] [options]` : show or change the server defaults (see below)
+- `[p]recensor rename <oldname> <newname>` : renames a filter
+- `[p]recensor show [name]` : displays information about all or one filter(s) in the server
+- `[p]recensor delete <name>` : deletes a filter
 
-**Inclusive** mode means that messages which match the pattern will be deleted, whereas **exclusive** mode means that messages which do __not__ match the pattern will be deleted. Naturally, only one exclusive mode filter can be set at a time. Also, you cannot set an exclusive filter for a channel if one is set for the server, and vice-versa.
+Each filter in a server has the following settings:
+- `enabled` : self-explanatory
+- `mode` : controls whether the filter behaves like a `white`list or `black`list
+- `override`: controls the filter's priority (see Filter Priority below)
+- `pattern` : the regular expression itself
+- `flags` for the regular expression, which are explained in detail [here](https://docs.python.org/3/howto/regex.html#compilation-flags)
+  - this is how to set case sensitivity and newline behavior, among other things
+  - default flags are `i` (case insensitive) and `s` (dot matches newline)
+- `position`: controls which part of the message has to match (defaults to `anywhere`):
+  - `start` : only looks at the beginning of the message (`re.match`)
+  - `anywhere` : scans through the full message looking for a match (`re.search`)
+  - `full` : the entire message must match, from start to finish (`re.fullmatch`)
+- `roles` that are or aren't subject to the filter (see List Configuration below)
+- `channels` in which the filter is or isn't in effect (see List Configuration below)
+- `priv-exempt`: whether mods, admins and the server owner are immune to the filter
+  - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
+
+The cog also supports configuring the following server-wide settings:
+- A `priv-exempt` toggle, which makes moderators, admins and the server owner immune from *all* filters by default
+- A list of `channels` where messages will or will not be filtered
+  - only applies to filters whose lists have overlay enabled
+- A list of `roles` that are either immune or exclusively subject to any filters
+  - only applies to filters whose lists have overlay enabled
+
+#### Filter Priority
+For messages that match the roles and channels configuration, the filtering process is as follows:
+1. if the message matches any black filters that have override mode on, delete it;
+2. if the message matches any white filters that have override mode on, allow it and stop checking;
+3. if the server or channel has ANY white filters and the message didn't match any of them, delete it;
+4. if the message matches ANY black filters, delete it;
+5. if none of the above apply, the message is not deleted
+
+In short, the filter priority is black override > white override > white > black. The old terminology of inclusive/exclusive was deemed confusing, so the terms are now black and white, respectively.
+
+#### List Configuration
+For full flexibility, each filter can be set to apply to any number of roles or channels, described by a blacklist or whitelist. The server-wide lists act as a starting point for any filters that have `overlay` enabled (see below), and filter lists can be linked to each other for centralized management.
+
+The `channels` and `roles` settings are manipulated through a standard interface using the following operations:
+- `mode` : set whether the list is a `blacklist` or `whitelist`
+- `enabled` : self-explanatory. If a list is disabled, it will be skipped when filtering messages.
+- `add` : adds one or more items to the list
+- `remove` : removes one or more items from the list
+- `overlay` : set whether the list "overlays" its server-wide counterpart
+  - Overlay is the default behavior; if disabled, the list is independent of the server's.
+- `clear` : removes all items from the list (doesn't reset the mode)
+- `cleanup` : removes references to deleted items from the list
+- `invert` : replaces the contents of the list with all items that are not in the list
+- `link` : replaces the list with a reference to another (WARNING: erases the list's configuration!)
+  - Only filter lists can be linked; the server-wide list is standalone.
+- `unlink` : replaces a linked list with a copy of the link's former target
+
+Set operations take the name of another filter (or `SERVER`) as the only argument:
+- `replace` : replace the contents of this list with another
+- `union` : like `replace`, but only adds new items
+- `difference` : removes any items that are in the other list
+- `intersect` : removes any items that are __not__ also in the other list
+- `symdiff` : replaces the list with items that are in __either__ list, but not both
+
+If `overlay` is enabled for a filter, the server list acts as "all items" for that filter. For example, if the server's list excludes two channels (A and B) from being filtered, and the filter list excludes two more (C and D), all four will be excluded. If the list is instead set to filter in only A and C, A will still be excluded and the filter will not function there. A warning will be shown in cases like this. Overlay applies to the `invert` operation as well: inverting a filter that excludes C and D will not exclude A and B.
 
 ### How do I use scheduler?
 The scheduler cog supports a number of different functions. All users can schedule a command to run in the future ("one-shot"), but only moderators and members with the "manage messages" permission can add or manage repeating commands. Additionally, only one of the same command can be scheduled at a time for each member. To schedule it again, they must cancel the one they scheduled before.
