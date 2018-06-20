@@ -93,7 +93,7 @@ Note: The version of discord.py that Red v2 is based on doesn't have a way to re
 Embedwiz is a fairly simply cog.
 
 To build an embed, specify the following parameters seperated by a semicolon (`;`):
-* Title: to make a link, put `\[Title text\]\(title url\)`
+* Title: to make a link, put `[Title text](title url)`
 * Color: "none" (default), #ABC123, 0xABC123, "random", "black" or any member of [`discord.Colour`](https://discordpy.readthedocs.io/en/async/api.html#discord.Colour)
 * Footer text
 * Footer icon URL
