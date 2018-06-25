@@ -201,7 +201,7 @@ The cog also supports configuring the following server-wide settings:
 For messages that match the roles and channels configuration, the filtering process is as follows:
 1. if the message matches any black filters that have override mode on, delete it;
 2. if the message matches any white filters that have override mode on, allow it and stop checking;
-3. if the server or channel has ANY white filters and the message didn't match any of them, delete it;
+3. if the server or channel has ANY non-override white filters and the message didn't match any of them, delete it;
 4. if the message matches ANY black filters, delete it;
 5. if none of the above apply, the message is not deleted
 
@@ -232,6 +232,23 @@ Set operations take the name of another filter (or `SERVER`) as the only argumen
 - `symdiff` : replaces the list with items that are in __either__ list, but not both
 
 If `overlay` is enabled for a filter, the server list acts as "all items" for that filter. For example, if the server's list excludes two channels (A and B) from being filtered, and the filter list excludes two more (C and D), all four will be excluded. If the list is instead set to filter in only A and C, A will still be excluded and the filter will not function there. A warning will be shown in cases like this. Overlay applies to the `invert` operation as well: inverting a filter that excludes C and D will not exclude A and B.
+
+#### Example Patterns
+Links:
+- All URLs: `\b(?:https?|ftp)://[^\s/$.?#].[^\s]*`
+- Discord invites: `\b(?:https?://)?discord(?:app\.com/invite|\.(?:io|me|li|gg))/[^\s/]+`
+- To allow only one kind of URL but not the other:
+  - only Discord invites or no URL: blacklist normal URLs, whitelist override Discord
+  - only normal URLs or no URL: blacklist Discord invites
+  - only Discord invites: whitelist Discord invites
+  - only normal URLs: blacklist override Discord invites, whitelist normal
+
+Miscellaneous:
+- Custom emotes: `<:\w+:\d+>\s*`
+- 5 consecutive all-caps words (with punctuation): `(?:[A-Z]+\b[\s.!]*){5,}`
+  - NOTE: requires the I flag to be removed, as it is enabled by default
+- 30 consecutive characters/mentions: `(?s)^(?:<(?:[#@&!]+|:\w+:)\d+>|.(?<!<[#@&:!])){30,}`
+  - Emotes and user, role, and channel mentions count as one character
 
 ### How do I use scheduler?
 The scheduler cog supports a number of different functions. All users can schedule a command to run in the future ("one-shot"), but only moderators and members with the "manage messages" permission can add or manage repeating commands. Additionally, only one of the same command can be scheduled at a time for each member. To schedule it again, they must cancel the one they scheduled before.

