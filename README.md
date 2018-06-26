@@ -164,6 +164,7 @@ The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library
 
 Most of the configuration will be done with the following commands:
 - `[p]recensor create <name> [pattern]` : creates a new filter
+- `[p]recensor copy <name> <newname> [link]` : Copies an existing filter, with optional link
 - `[p]recensor test <name>` : interactively tests an existing filter
 - `[p]recensor regex101 [test message]` : opens a pattern in regex101.com with optional test message
 - `[p]recensor help` : displays links to reference material (such as this README)
@@ -181,6 +182,12 @@ Each filter in a server has the following settings:
 - `flags` for the regular expression, which are explained in detail [here](https://docs.python.org/3/howto/regex.html#compilation-flags)
   - this is how to set case sensitivity and newline behavior, among other things
   - default flags are `i` (case insensitive) and `s` (dot matches newline)
+- `multi-msg`: search for a match spanning several messages
+  - looks at the last 64 messages or 10 minutes, whichever is less.
+  - currently looks at per-user per-channel sequences; matches do not span users.
+  - **BIG SCARY WARNING:** greedy wildcards can match DOZENS OF MESSAGES!
+- `multi-join`: what string to join messages on (defaults to `\n`)
+ - if you want to match subsequent messages without any gaps, set this to `""` (empty)
 - `position`: controls which part of the message has to match (defaults to `anywhere`):
   - `start` : only looks at the beginning of the message (`re.match`)
   - `anywhere` : scans through the full message looking for a match (`re.search`)
@@ -189,9 +196,12 @@ Each filter in a server has the following settings:
 - `channels` in which the filter is or isn't in effect (see List Configuration below)
 - `priv-exempt`: whether mods, admins and the server owner are immune to the filter
   - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
+- `asciify`: attempt to reduce unicode text to its equivalent ASCII before matching
+  - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
 
 The cog also supports configuring the following server-wide settings:
 - A `priv-exempt` toggle, which makes moderators, admins and the server owner immune from *all* filters by default
+- An `asciify` toggle, which makes the cog attempt to reduce unicode text to its equivalent ASCII by default
 - A list of `channels` where messages will or will not be filtered
   - only applies to filters whose lists have overlay enabled
 - A list of `roles` that are either immune or exclusively subject to any filters

@@ -4,5 +4,6 @@
     "NAME" : "RECensor",
     "SHORT" : "Uses regular expressions to auto-delete messages.",
     "DESCRIPTION" : "Uses regular expressions to filter messages matching or not matching a given pattern.",
+    "REQUIREMENTS": ["unidecode"],
     "TAGS" : ["recensor", "moderation", "regex", "censor", "filter"]
 }

@@ -1,7 +1,8 @@
-from collections import OrderedDict
+from collections import defaultdict, OrderedDict
 from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timedelta
 import discord
-from discord import Object as DiscordObject
+from discord import Message, Object as DiscordObject
 from discord.mixins import Hashable as DiscordHashable
 from discord.ext import commands
 from discord.ext.commands.errors import BadArgument
@@ -10,19 +11,24 @@ from enum import Enum
 from functools import partial
 import inspect
 import logging
-from multiprocessing import Manager
 import os
 import re
-from typing import Optional, Iterable, List, Union, Type
+from typing import (Callable, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, Type, TypeVar, Union)
+import unicodedata
 import urllib.parse
 
 from .utils.dataIO import dataIO
 from .utils import checks
 from .utils.chat_formatting import box, warning, error, info
 
+try:
+    from unidecode import unidecode
+except ImportError:
+    unidecode = None
 
 # Analytics core
 import zlib, base64
+
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -52,13 +58,21 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.1.0'
+__version__ = '2.2.0'
 
 log = logging.getLogger('red.recensor')
 
 DATA_PATH = "data/recensor/"
 JSON_PATH = DATA_PATH + "regexen.json"
 DEFAULT_FLAGS = 'IS'
+MSG_HISTORY_MAX_NUM = 32
+MSG_HISTORY_MAX_TIME = 60 * 10  # 10 minutes
+CONCAT_JOIN = '\n'
+
+DiscordUniObj = Union[DiscordObject, DiscordHashable]
+T = TypeVar('T')
+HT = TypeVar('HT', bound=Hashable)
+SRE_Match = type(re.match('', ''))
 
 FLAGS_DESC = {
     'A': 'ASCII',
@@ -70,50 +84,108 @@ FLAGS_DESC = {
 }
 
 DATACLASSES_BY_NAME = {
-    'server'  : discord.Server,
-    'role'    : discord.Role,
-    'channel' : discord.Channel,
-    'member'  : discord.Member,
-    'user'    : discord.User
+    'server': discord.Server,
+    'role': discord.Role,
+    'channel': discord.Channel,
+    'member': discord.Member,
+    'user': discord.User
 }
 
 NAMES_BY_DATACLASS = {DATACLASSES_BY_NAME[k]: k for k in DATACLASSES_BY_NAME}
 
 ITEM_LOOKUP_GETTERS = {
-    discord.Role    : lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.roles, id=i))),
-    discord.Emoji   : lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.emojis, id=i))),
-    discord.Channel : lambda c: (c.message.server and c.message.server.get_channel),
-    discord.Member  : lambda c: (c.message.server and c.message.server.get_member),
-    discord.User    : lambda c: (c.message.server and c.message.server.get_member),
-    discord.Server  : lambda c: c.bot.get_server
+    discord.Role: lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.roles, id=i))),
+    discord.Emoji: lambda c: (c.message.server and (lambda i: discord.utils.get(c.message.server.emojis, id=i))),
+    discord.Channel: lambda c: (c.message.server and c.message.server.get_channel),
+    discord.Member: lambda c: (c.message.server and c.message.server.get_member),
+    discord.User: lambda c: (c.message.server and c.message.server.get_member),
+    discord.Server: lambda c: c.bot.get_server
 }
 
 ITEM_LIST_GETTERS = {
-    discord.Role    : lambda c: (c.message.server and c.message.server.roles),
-    discord.Emoji   : lambda c: (c.message.server and c.message.server.emojis),
-    discord.Channel : lambda c: (c.message.server and c.message.server.channels),
-    discord.Member  : lambda c: (c.message.server and c.message.server.members),
-    discord.User    : lambda c: (c.message.server and c.message.server.members),
-    discord.Server  : lambda c: c.bot.servers
+    discord.Role: lambda c: (c.message.server and c.message.server.roles),
+    discord.Emoji: lambda c: (c.message.server and c.message.server.emojis),
+    discord.Channel: lambda c: (c.message.server and c.message.server.channels),
+    discord.Member: lambda c: (c.message.server and c.message.server.members),
+    discord.User: lambda c: (c.message.server and c.message.server.members),
+    discord.Server: lambda c: c.bot.servers
 }
 
 MENTIONS_BY_DATACLASS = {
-    discord.Role    : '<@&%s>',
-    discord.Channel : '<#%s>',
-    discord.Member  : '<@!%s>',
-    discord.User    : '<@!%s>'
+    discord.Role: '<@&%s>',
+    discord.Channel: '<#%s>',
+    discord.Member: '<@!%s>',
+    discord.User: '<@!%s>'
 }
 
-DiscordUniObj = Union[DiscordObject, DiscordHashable]
+# Symbols that aren't converted by unidecode
+EMOJI_LETTERS = dict(zip(
+    '🅰🅱🅾🅿🇦🇧🇨🇩🇪🇫🇬🇭🇮🇯🇰🇱🇲🇳🇴🇵🇶🇷🇸🇹🇺🇻🇼🇽🇾🇿⭕❌',
+    'ABOPABCDEFGHIJKLMNOPQRSTUVWXYZOX'
+))
 
 
 # Isolated to allow running potentially slow patterns in a ProcessPoolExecutor
-def check_match(predicate, string: str):
-    return bool(predicate(string))
+def check_match(predicate: Callable[[str], Optional[SRE_Match]], string: str) -> Optional[Tuple[int, int]]:
+    match = predicate(string)
+    return match and match.span()
+
+
+def concat_with_keys(strings: Sequence[str], join: str = CONCAT_JOIN) -> Tuple[str, List[int]]:
+    """
+    Returns the concatenated string (joined on `join`) and a list of the end position of each string in the output
+    """
+    indices = []
+    i = 0
+    join_len = len(join)
+
+    if not isinstance(strings, Sequence):
+        strings = tuple(strings)
+
+    for string in strings:
+        i += len(string) + join_len
+        indices.append(i)
+
+    indices[-1] -= join_len
+
+    return join.join(strings), indices
+
+
+def sequence_from_indices(sequence: Sequence[T], indices: Sequence[int], keys: Tuple[int, int]) -> List[T]:
+    """
+    Returns a list of the objects that the match denoted by `keys` overlapped, based on `indices`
+    """
+    ret = []
+    start, end = keys
+
+    for obj, index in zip(sequence, indices):
+        if index <= start:
+            continue
+        elif index >= end:
+            ret.append(obj)
+            break
+
+        ret.append(obj)
+
+    return ret
+
+
+def asciify_string(string: str) -> str:
+    # Strip marks/combining characters
+    string = (c for c in string if not unicodedata.category(c).startswith('M'))
+
+    # Run through substitution table
+    string = ''.join(EMOJI_LETTERS.get(c, c) for c in string)
+
+    # Run through unidecode, if available
+    if unidecode:
+        return unidecode.unidecode(string)
+
+    return string
 
 
 # https://stackoverflow.com/a/11564323
-def topological_sort(source):
+def topological_sort(source: Iterable[Tuple[HT, Sequence[HT]]]) -> Iterator[HT]:
     """
     Perform topo sort on elements.
 
@@ -147,11 +219,12 @@ def topological_sort(source):
 
 
 class POSITION(Enum):
-    START    = 'start'
-    FULL     = 'full'
+    START = 'start'
+    FULL = 'full'
     ANYWHERE = 'anywhere'
 
 
+#  -> Optional[Type[DiscordUniObj]], but it breaks 3.5
 def type_from_name(list_name: str):
     for k in DATACLASSES_BY_NAME:
         k = k.lower()
@@ -168,6 +241,24 @@ def flags_to_int(flag_chars):
         flags |= getattr(re, c.upper(), 0)
 
     return flags
+
+
+class BoundedOrderedDict(OrderedDict):
+    __slots__ = ['_maxlen']
+
+    def __init__(self, iterable: Sequence = (), maxlen=None):
+        self._maxlen = maxlen
+        super().__init__(iterable)
+
+    @property
+    def maxlen(self):
+        return self._maxlen
+
+    def __setitem__(self, key, value):
+        if not self.__contains__(key) and len(self) == self._maxlen:
+            self.popitem(last=False)
+
+        super().__setitem__(key, value)
 
 
 class FilterBase:
@@ -253,9 +344,9 @@ class FilterList:
 
     def to_json(self) -> dict:
         data = {
-            'mode'    : self.mode,
-            'items'   : list(self.items),
-            'enabled' : self.enabled
+            'mode': self.mode,
+            'items': list(self.items),
+            'enabled': self.enabled
         }
 
         if self.overlay is not None:
@@ -280,12 +371,13 @@ class FilterList:
 
 
 class ServerConfig(FilterBase):
-    __slots__ = ['cog', 'priv_exempt', 'roles_list', 'channels_list', 'filters', 'order']
+    __slots__ = ['cog', 'asciify', 'priv_exempt', 'roles_list', 'channels_list', 'filters', 'order']
 
     def __init__(self, cog, **data):
         self.cog = cog
         self.name = 'SERVER'
 
+        self.asciify = data.get('asciify', False)
         self.priv_exempt = data.get('priv_exempt', True)
         self.filters = {}
         self.order = []
@@ -474,19 +566,28 @@ class ServerConfig(FilterBase):
 
         return True
 
-    async def check_message(self, message: discord.Message):
+    async def check_message(self, message: Message, list_cache: dict = None) -> bool:
         """
         Return true if message should be deleted
         """
         has_white = False
         match_white = False
-        list_cache = {}
+        asciified = None
+
+        if list_cache is None:
+            list_cache = {}
 
         for f in self.order:
             if not (f.check_meta(message, list_cache) and f.predicate):
                 continue
 
-            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, message.content)
+            if f.asciify or (f.asciify is None and self.asciify):
+                if asciified is None:
+                    asciified = asciify_string(message.content)
+
+                match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, asciified)
+            else:
+                match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, message.content)
 
             if f.override and match:  # override black or white
                 return not f.mode
@@ -500,18 +601,58 @@ class ServerConfig(FilterBase):
 
         return False
 
+    async def check_sequence(self, messages: Sequence[Message], list_cache: Optional[dict] = None) -> List[Message]:
+        """
+        Return a list of messages from the sequence that should be deleted
+        """
+        to_delete = []
+
+        if not messages:
+            return []
+        elif list_cache is None:
+            list_cache = {}
+
+        joined_cache = {}
+
+        for f in self.order:
+            if not (f.multi_msg and f.check_meta(messages[-1], list_cache) and f.predicate):
+                continue
+
+            is_asciify = f.asciify or (f.asciify is None and self.asciify)
+
+            ck = ('a_' if is_asciify else 'n_') + f.multi_msg_join
+
+            if ck in joined_cache:
+                content, indices = joined_cache[ck]
+            else:
+                if is_asciify:
+                    strings = [asciify_string(m.content) for m in messages]
+                else:
+                    strings = [m.content for m in messages]
+
+                joined_cache[ck] = (content, indices) = concat_with_keys(strings, f.multi_msg_join)
+
+            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
+
+            if match:
+                to_delete = sequence_from_indices(messages, indices, match)
+                break
+
+        return to_delete
+
     def to_json(self):
         return {
-            'priv_exempt'   : self.priv_exempt,
-            'channels_list' : self.channels_list.to_json(),
-            'roles_list'    : self.roles_list.to_json(),
-            'filters'       : {k: v.to_json() for k, v in self.filters.items()}
+            'asciify'      : self.asciify,
+            'priv_exempt'  : self.priv_exempt,
+            'channels_list': self.channels_list.to_json(),
+            'roles_list'   : self.roles_list.to_json(),
+            'filters'      : {k: v.to_json() for k, v in self.filters.items()}
         }
 
 
 class Filter(FilterBase):
-    __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'position',
-                 'channels_list', 'roles_list', 'priv_exempt', '_predicate', 'links']
+    __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'asciify', 'position',
+                 'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', '_predicate', 'links']
 
     def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
         self.parent = parent
@@ -523,6 +664,9 @@ class Filter(FilterBase):
         self.enabled = data.get('enabled', False)
         self.override = data.get('override', False)
         self.priv_exempt = data.get('priv_exempt', None)
+        self.multi_msg = data.get('multi_msg', False)
+        self.multi_msg_join = data.get('multi_msg_join', CONCAT_JOIN)
+        self.asciify = data.get('asciify', None)
 
         self.position = POSITION(data.get('position', POSITION.ANYWHERE))
         self._predicate = self.rebuild_predicate()
@@ -587,7 +731,7 @@ class Filter(FilterBase):
 
         return self._predicate
 
-    def check_meta(self, message: discord.Message, cache=None):
+    def check_meta(self, message: Message, cache=None):
         """
         Return True if message is eligible for regex check
         """
@@ -628,13 +772,16 @@ class Filter(FilterBase):
 
     def to_json(self):
         data = {
-            'enabled'     : self.enabled,
-            'pattern'     : self.pattern,
-            'flags'       : self.flags,
-            'mode'        : self.mode,
-            'override'    : self.override,
-            'priv_exempt' : self.priv_exempt,
-            'position'    : self.position.value
+            'asciify'        : self.asciify,
+            'enabled'        : self.enabled,
+            'flags'          : self.flags,
+            'mode'           : self.mode,
+            'multi_msg'      : self.multi_msg,
+            'multi_msg_join' : self.multi_msg_join,
+            'override'       : self.override,
+            'pattern'        : self.pattern,
+            'position'       : self.position.value,
+            'priv_exempt'    : self.priv_exempt
         }
 
         for k in ['roles_list', 'channels_list']:
@@ -701,25 +848,29 @@ class ReCensor:
     #   server_id (str): {
     #       'filters' : {
     #           name (str) : {
-    #               'pattern'       : pattern (str),
-    #               'flags'         : flags (str containing subset of AILUMSX),
-    #               'enabled'       : bool (default false),
-    #               'mode'          : bool (default false),
-    #               'override'      : bool (default false),
-    #               'position'      : enum[str] (default POSITION.ANYWHERE),
-    #               'channels_list' : {
+    #               'asciify'        : tristate (default null),
+    #               'enabled'        : bool (default false),
+    #               'flags'          : flags (str containing subset of AILUMSX, default DEFAULT_FLAGS),
+    #               'mode'           : bool (default false),
+    #               'multi_msg'      : bool (default false),
+    #               'multi_msg_join' : str (default CONCAT_JOIN),
+    #               'override'       : bool (default false),
+    #               'pattern'        : pattern (str),
+    #               'position'       : enum[str] (default POSITION.ANYWHERE),
+    #               'channels_list'  : {
     #                       'mode'      :   tristate,
     #                       'items'     :   list[channel_id (str)]},
     #                       'overlay'   :   optional bool (default true)
     #               },
-    #               'roles_list'    : {
+    #               'roles_list'     : {
     #                       'mode'      :   tristate,
     #                       'items'     :   list[channel_id (str)]},
     #                       'overlay'   :   optional bool (default true)
     #               },
-    #               'priv_exempt'   : tristate
+    #               'priv_exempt'    : tristate
     #           }
     #       },
+    #       'asciify'       : bool (default false),
     #       'priv_exempt'   : bool (default true),
     #       'roles_list'    : {
     #                   'mode'  :   tristate,
@@ -736,11 +887,12 @@ class ReCensor:
         self.bot = bot
         self.ready = False
 
-        self.manager = Manager()
         self.executor = ProcessPoolExecutor()
         self.settings = {}
         self.misc_data = {}
         self._ignore_filters = {}
+        self._message_cache = defaultdict(lambda: BoundedOrderedDict(maxlen=MSG_HISTORY_MAX_NUM))
+        self._deleting = set()
 
         data = dataIO.load_json(JSON_PATH)
         if data.get('_schema_version', 1) < 2:
@@ -855,7 +1007,6 @@ class ReCensor:
         settings = self.settings.get(server.id)
         filter_name = filter_name and filter_name.lower()
 
-
         if not (settings and settings.filters):
             await self.bot.say(info('There are no filters in this server to show.'))
             return
@@ -896,24 +1047,36 @@ class ReCensor:
             return '\n'.join(lines)
 
         def format_params(obj):
-            order = ['mode', 'priv_exempt', 'override', 'position']
+            order = ['Mode', 'ASCIIfy', 'Privilege exempt', 'Override', 'Position', 'Multi-message',
+                     'Multi-message join']
             params = {
-                'priv_exempt' : ('yes' if obj.priv_exempt else 'no')
+                'Priv. exempt' : ('yes' if obj.priv_exempt else 'no'),
+                'ASCIIfy'      : ('yes' if obj.asciify else 'no'),
             }
 
             if type(obj) is Filter:
                 params.update({
-                    'enabled'  : ('yes' if obj.enabled else 'no'),
-                    'mode'     : ('white' if obj.mode else 'black'),
-                    'override' : ('yes' if obj.override else 'no'),
-                    'flags'    : obj.flags or '(none)',
-                    'position' : obj.position.value
+                    'Enabled'       : ('yes' if obj.enabled else 'no'),
+                    'Mode'          : ('white' if obj.mode else 'black'),
+                    'Override'      : ('yes' if obj.override else 'no'),
+                    'Multi-message' : ('yes' if obj.multi_msg else 'no'),
+                    'Flags'         : obj.flags or '(none)',
+                    'Position'      : obj.position.value
                 })
 
-                if obj.priv_exempt is None:
-                    params['priv_exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
+                if obj.multi_msg:
+                    if obj.multi_msg_join:
+                        params['Multi-message join'] = '`"%s"`' % obj.multi_msg_join.encode('unicode_escape').decode()
+                    else:
+                        params['Multi-message join'] = '`""` (empty string)'
 
-            return '\n'.join((k.title().replace('_', r'\_') + ': ' + params[k]) for k in order if k in params)
+                if obj.priv_exempt is None:
+                    params['Privilege exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
+
+                if obj.asciify is None:
+                    params['ASCIIfy'] = 'inherited (%s)' % ('yes' if obj.parent.asciify else 'no')
+
+            return '\n'.join((k + ': ' + params[k]) for k in order if k in params)
 
         if filter_name is None:
             objects = [settings] + [v for k, v in sorted(settings.filters.items())]
@@ -928,7 +1091,7 @@ class ReCensor:
             description = format_params(item)
 
             if isinstance(item, ServerConfig):
-                title = 'Server Configuration'
+                title = 'Server Configuration/Defaults'
                 color = discord.Color.blue()
             else:
                 title = 'Filter: ' + item.name
@@ -998,7 +1161,7 @@ class ReCensor:
 
         self.save()
         await self.bot.say(info('Filter created%s. Configure it with `%srecensor %s [setting] [options]`'
-                           % (' and pattern set' if pattern else '', ctx.prefix, name)))
+                                % (' and pattern set' if pattern else '', ctx.prefix, name)))
 
     @recensor.command(pass_context=True, name='delete', aliases=['rm'])
     async def recensor_delete(self, ctx, name: str):
@@ -1125,6 +1288,46 @@ class ReCensor:
 
         desc = 'enabled' if priv_exempt else 'disabled'
         await self.bot.say('Server-wide privilege user exemption for is %s %s by default.' % (adj, desc))
+
+    @recensor_server.command(pass_context=True, name='asciify')
+    async def recensor_server_asciify(self, ctx, asciify: bool = None):
+        """
+        Show/set server-wide ASCIIfy toggle
+
+        If enabled, the filters will attempt to reduce unicode text to its equivalent ASCII before matching by default
+
+        For full effectiveness, unidecode must be installed
+
+        asciify must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+
+        if type(asciify) not in (bool, type(None)):
+            asciify = await ctx.command.do_conversion(ctx, bool, asciify)
+
+        if not settings:
+            self.settings[server.id] = settings = ServerConfig(self)
+            self.save()
+
+        if asciify is None:
+            asciify = settings.asciify
+            adj = 'currently'
+        elif settings.asciify == asciify:
+            adj = 'already'
+        else:
+            adj = 'now'
+            settings.asciify = asciify
+            self.save()
+
+        msg = 'ASCIIfy is %s %s by default.' % (adj, 'enabled' if asciify else 'disabled')
+
+        if not unidecode:
+            msg += '\n\n' + warning("Note that the `unidecode` package is not installed on the bot, so this feature "
+                                    "will not be fully functional. The bot owner should run:\n"
+                                    "`%sdebug bot.pip_install('unidecode')`\nand then reload this cog." % ctx.prefix)
+
+        await self.bot.say(msg)
 
     @recensor_server.command(pass_context=True, name='channels')
     async def recensor_server_channels(self, ctx, operation: str = None, *options):
@@ -1268,18 +1471,22 @@ class ReCensor:
         await self.bot.say('Filter override for %s is %s %s.' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='priv-exempt')
-    async def recensor_set_priv_exempt(self, ctx, filter_name: str, priv_exempt: bool = None):
+    async def recensor_set_priv_exempt(self, ctx, filter_name: str, priv_exempt: str = None):
         """
         Show/set filter privileged user exemption toggle
 
-        priv_exempt must be a boolean option or left blank to show the current setting
+        priv_exempt must be a boolean option, 'inherit', or left blank to show the current setting
         """
         server = ctx.message.server
         settings = self.settings.get(server.id)
         name = filter_name.lower()
         _filter = settings and settings.get_filter(name)
 
-        if type(priv_exempt) not in (bool, type(None)):
+        inherit = object()
+
+        if type(priv_exempt) is str and priv_exempt.lower().strip("'`\" "):
+            priv_exempt = inherit
+        elif type(priv_exempt) not in (bool, type(None)):
             priv_exempt = await ctx.command.do_conversion(ctx, bool, priv_exempt)
 
         if not _filter:
@@ -1288,15 +1495,147 @@ class ReCensor:
         elif priv_exempt is None:
             priv_exempt = _filter.priv_exempt
             adj = 'currently'
-        elif _filter.priv_exempt == priv_exempt:
+        elif _filter.priv_exempt == priv_exempt or (_filter.priv_exempt is None and priv_exempt is inherit):
             adj = 'already'
         else:
             adj = 'now'
             _filter.priv_exempt = priv_exempt
             self.save()
 
-        desc = 'enabled' if priv_exempt else 'disabled'
+        if priv_exempt in (None, inherit):
+            desc = 'inherit (%s)' % ('enabled' if _filter.parent.priv_exempt else 'disabled')
+        else:
+            desc = 'enabled' if priv_exempt else 'disabled'
+
         await self.bot.say('Privilege user exemption for %s is %s %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='asciify')
+    async def recensor_set_asciify(self, ctx, filter_name: str, asciify: str = None):
+        """
+        Show/set filter ASCIIfy toggle
+
+        If enabled, the filter will attempt to reduce unicode text to its equivalent ASCII before matching
+
+        For full effectiveness, unidecode must be installed
+
+        asciify must be a boolean option, 'inherit', or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        inherit = object()
+
+        if type(asciify) is str and asciify.lower().strip("'`\" "):
+            asciify = inherit
+        elif type(asciify) not in (bool, type(None)):
+            asciify = await ctx.command.do_conversion(ctx, bool, asciify)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif asciify is None:
+            asciify = _filter.asciify
+            adj = 'currently'
+        elif _filter.asciify == asciify or (_filter.asciify is None and asciify is inherit):
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.asciify = asciify
+            self.save()
+
+        if asciify in (None, inherit):
+            desc = 'inherit (%s)' % ('enabled' if _filter.parent.asciify else 'disabled')
+        else:
+            desc = 'enabled' if asciify else 'disabled'
+
+        msg = 'ASCIIfy for %s is %s %s.' % (_filter.name, adj, desc)
+
+        if not unidecode:
+            msg += '\n\n' + warning("Note that the `unidecode` package is not installed on the bot, so this feature "
+                                    "will not be fully functional. The bot owner should run:\n"
+                                    "`%sdebug bot.pip_install('unidecode')`\nand then reload this cog." % ctx.prefix)
+
+        await self.bot.say(msg)
+
+    @recensor_set.command(pass_context=True, name='multi-msg', aliases=['multi'])
+    async def recensor_set_multi_msg(self, ctx, filter_name: str, multi_msg: bool = None):
+        """
+        Show/set filter multi-message search toggle
+
+        When enabled, the filter will check the last 64 messages or 10 minutes
+        of messages per user per channel for a match. Matched spans of messages
+        will be deleted as a group. Only works in blacklist mode.
+
+        multi_msg must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(multi_msg) not in (bool, type(None)):
+            multi_msg = await ctx.command.do_conversion(ctx, bool, multi_msg)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif multi_msg is None:
+            multi_msg = _filter.multi_msg
+            adj = 'currently'
+        elif _filter.multi_msg == multi_msg:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.multi_msg = multi_msg
+            self.save()
+
+        desc = 'enabled' if multi_msg else 'disabled'
+        msg = 'Multi-message search for %s is %s %s.' % (_filter.name, adj, desc)
+
+        if _filter.mode:
+            msg += '\n\n' + warning('Note that multi-message is only supported for blacklist mode filters, so '
+                                    'this filter __will not__ function until it is switched to blacklist mode.')
+
+        await self.bot.say(msg)
+
+    @recensor_set.command(pass_context=True, name='multi-join')
+    async def recensor_set_multi_msg_join(self, ctx, filter_name: str, join: str = None):
+        """
+        Show/set multi-message join
+
+        join must be an escaped string (double quotes can be used for spaces), or left blank to show the current setting
+
+        For example, "\\n" is translated into a newline for the join, and " " is stored as a simple space.
+        "" (an empty string) is also acceptable.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        join = join and bytes(join, "utf-8").decode("unicode_escape")
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif join is None:
+            join = _filter.multi_msg_join
+            adj = 'currently'
+        elif _filter.multi_msg_join == join:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.multi_msg_join = join
+            self.save()
+
+        disp = '`"%s"`' % join.encode('unicode_escape').decode()
+
+        if join == '':
+            disp += ' (empty string)'
+
+        await self.bot.say('Multi-message join for %s is %s set to %s.' % (_filter.name, adj, disp))
 
     @recensor_set.command(pass_context=True, name='mode')
     async def recensor_set_mode(self, ctx, filter_name: str, mode: str = None):
@@ -2250,7 +2589,7 @@ class ReCensor:
                 return False
 
     def is_mod_or_superior(self, obj):  # Copied from red core mod.py
-        if not isinstance(obj, (discord.Message, discord.Member, discord.Role)):
+        if not isinstance(obj, (Message, discord.Member, discord.Role)):
             raise TypeError('Only messages, members or roles may be passed')
 
         server = obj.server
@@ -2259,7 +2598,7 @@ class ReCensor:
 
         if isinstance(obj, discord.Role):
             return obj.name in [admin_role, mod_role]
-        elif isinstance(obj, discord.Message):
+        elif isinstance(obj, Message):
             user = obj.author
         elif isinstance(obj, discord.Member):
             user = obj
@@ -2277,24 +2616,91 @@ class ReCensor:
 
     # Listeners
 
-    async def on_message(self, message):
-        # Fast checks
-        if message.channel.is_private or message.author == self.bot.user or not self.ready \
-                                      or not isinstance(message.author, discord.Member):
-            return
-        elif (message.channel.id, message.author.id) in self._ignore_filters:
-            return
-
+    async def on_message(self, message, *, _edit=False):
         server = message.server
-        sid = server.id
-        can_delete = message.channel.permissions_for(server.me).manage_messages
+        cache_key = (message.channel.id, message.author.id)
 
-        if can_delete and sid in self.settings:
-            if await self.settings[sid].check_message(message):
-                await self.bot.delete_message(message)
+        # Fast checks
+        if not (server and self.ready) or message.author == self.bot.user \
+                or server.id not in self.settings or cache_key in self._ignore_filters:
+            return
+
+        settings = self.settings[server.id]
+        message_deque = self._message_cache[cache_key]
+        self.cleanup_deque(message_deque)
+
+        # Only set if message is new or when updating existing
+        if (message.id in message_deque) == _edit:
+            message_deque[message.id] = message
+
+        if not message.channel.permissions_for(server.me).manage_messages:
+            return
+
+        self._deleting.add(cache_key)
+        list_cache = {}
+
+        if await settings.check_message(message, list_cache):
+            await self.bot.delete_message(message)
+            message_deque.pop(message.id, None)  # deleting a message may make a gap
+
+        await self.handle_seq(self.settings[server.id], message_deque, list_cache)
+        self._deleting.discard(cache_key)
 
     async def on_message_edit(self, old_message, new_message):
-        await self.on_message(new_message)
+        await self.on_message(new_message, _edit=True)
+
+    async def on_message_delete(self, message):
+        server = message.server
+        cache_key = (message.channel.id, message.author.id)
+
+        if not (server and self.ready) or message.author == self.bot.user \
+                or server.id not in self.settings or cache_key in self._ignore_filters \
+                or cache_key not in self._message_cache or cache_key in self._deleting:
+            return
+
+        message_deque = self._message_cache[cache_key]
+        self.cleanup_deque(message_deque)
+        message_deque.pop(message.id, None)
+
+        if not message.channel.permissions_for(server.me).manage_messages:
+            return
+
+        self._deleting.add(cache_key)
+        await self.handle_seq(self.settings[server.id], message_deque)
+        self._deleting.discard(cache_key)
+
+    @staticmethod
+    def cleanup_deque(message_deque: BoundedOrderedDict):
+        cutoff = datetime.utcnow() - timedelta(seconds=MSG_HISTORY_MAX_TIME)
+
+        for message_obj in list(message_deque.values()):
+            if message_obj.timestamp > cutoff:
+                break
+            else:
+                message_deque.popitem(last=False)  # popleft
+
+    async def handle_seq(self, settings: ServerConfig, message_deque: BoundedOrderedDict,
+                         list_cache: Optional[dict] = None):
+        all_to_delete = []
+
+        # Try until the deque is empty or we're out of stuff to delete (cascades)
+        while message_deque:
+            to_delete = await settings.check_sequence(list(message_deque.values()), list_cache)
+
+            if not to_delete:
+                break
+            else:
+                all_to_delete.extend(to_delete)
+
+            for deleted_message in to_delete:
+                message_deque.pop(deleted_message.id, None)
+
+        if not all_to_delete:
+            return
+        elif len(all_to_delete) == 1:
+            await self.bot.delete_message(all_to_delete[0])
+        else:
+            await self.bot.delete_messages(all_to_delete)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
@@ -2320,8 +2726,8 @@ def migrate_data(data):
         i = 0
 
         newdata[sid] = {
-            'priv_exempt': not sdata.get('no_exemptions', False),
-            'filters': {}
+            'priv_exempt' : not sdata.get('no_exemptions', False),
+            'filters'     : {}
         }
 
         for cid, cdata in sdata.items():
@@ -2357,9 +2763,9 @@ def migrate_data(data):
 
                 if cid != 'all':
                     newdata[sid]['filters'][name]['channels_list'] = {
-                        'enabled': True,
-                        'mode': True,
-                        'items': [cid]
+                        'enabled' : True,
+                        'mode'    : True,
+                        'items'   : [cid]
                     }
 
     return newdata
