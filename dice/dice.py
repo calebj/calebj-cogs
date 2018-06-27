@@ -49,7 +49,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.1'
+__version__ = '1.2.2'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -71,43 +71,6 @@ def _roll_task(func, expr):
         result = func(expr)
 
     return roll, kwargs, result
-
-
-# backported from discord.py rewrite
-class Typing:
-    def __init__(self, bot, destination):
-        self.bot = bot
-        self.destination = destination
-
-    async def do_typing(self):
-        try:
-            while True:
-                await self.bot.send_typing(self.destination)
-                await asyncio.sleep(5)
-        except:
-            pass
-
-    @staticmethod
-    def _typing_done_callback(fut):
-        # just retrieve any exception and call it a day
-        try:
-            fut.exception()
-        except:
-            pass
-
-    def __enter__(self):
-        self.task = asyncio.ensure_future(self.do_typing(), loop=self.bot.loop)
-        self.task.add_done_callback(self._typing_done_callback)
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        self.task.cancel()
-
-    async def __aenter__(self):
-        return self.__enter__()
-
-    async def __aexit__(self, exc_type, exc, tb):
-        self.task.cancel()
 
 
 class Dice:
@@ -179,10 +142,10 @@ class Dice:
 
     async def roll_common(self, ctx, expr, func=dice.roll, verbose=False):
         try:
-            with Typing(self.bot, ctx.message.channel):
-                task = partial(_roll_task, func, expr)
-                coro = self.bot.loop.run_in_executor(self.executor, task)
-                roll, kwargs, result = await coro
+            await self.bot.send_typing(ctx.message.channel)
+            task = partial(_roll_task, func, expr)
+            coro = self.bot.loop.run_in_executor(self.executor, task)
+            roll, kwargs, result = await coro
         except ParseBaseException as e:
             msg = warning('An error occured while parsing your expression:\n')
 
