@@ -1,5 +1,5 @@
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import CancelledError, ProcessPoolExecutor
 from discord.ext import commands
 from functools import partial
 from pyparsing import ParseBaseException
@@ -49,7 +49,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.0'
+__version__ = '1.2.1'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -80,9 +80,12 @@ class Typing:
         self.destination = destination
 
     async def do_typing(self):
-        while True:
-            await self.bot.send_typing(self.destination)
-            await asyncio.sleep(5)
+        try:
+            while True:
+                await self.bot.send_typing(self.destination)
+                await asyncio.sleep(5)
+        except:
+            pass
 
     @staticmethod
     def _typing_done_callback(fut):
