@@ -1,6 +1,9 @@
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
 from discord.ext import commands
-from .utils.chat_formatting import box, warning, pagify
+from functools import partial
 from pyparsing import ParseBaseException
+from .utils.chat_formatting import box, warning, pagify
 
 try:
     import dice
@@ -46,7 +49,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -54,17 +57,71 @@ UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "[p]debug bot.pip_install('dice')\n```") % dice.__version__
 
 
+def _roll_task(func, expr):
+    roll = None
+    kwargs = None
+
+    if DICE_210:
+        roll, kwargs = func(expr, raw=True, return_kwargs=True)
+        result = roll.evaluate_cached(**kwargs)
+    elif DICE_200:
+        roll = func(expr, raw=True)
+        result = roll.evaluate_cached()
+    else:
+        result = func(expr)
+
+    return roll, kwargs, result
+
+
+# backported from discord.py rewrite
+class Typing:
+    def __init__(self, bot, destination):
+        self.bot = bot
+        self.destination = destination
+
+    async def do_typing(self):
+        while True:
+            await self.bot.send_typing(self.destination)
+            await asyncio.sleep(5)
+
+    @staticmethod
+    def _typing_done_callback(fut):
+        # just retrieve any exception and call it a day
+        try:
+            fut.exception()
+        except:
+            pass
+
+    def __enter__(self):
+        self.task = asyncio.ensure_future(self.do_typing(), loop=self.bot.loop)
+        self.task.add_done_callback(self._typing_done_callback)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.task.cancel()
+
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.task.cancel()
+
+
 class Dice:
     """A cog which uses the python-dice library to provide powerful dice
     expression parsing for your games!"""
     def __init__(self, bot):
         self.bot = bot
+        self.executor = ProcessPoolExecutor()
 
         try:
             self.analytics = CogAnalytics(self)
         except Exception as error:
             self.bot.logger.exception(error)
             self.analytics = None
+
+    def __unload(self):
+        self.executor.shutdown(wait=True)
 
     @commands.group(pass_context=True, name='dice', invoke_without_command=True)
     async def _dice(self, ctx, *, expr: str = 'd20'):
@@ -119,15 +176,10 @@ class Dice:
 
     async def roll_common(self, ctx, expr, func=dice.roll, verbose=False):
         try:
-            if DICE_210:
-                roll, kwargs = func(expr, raw=True, return_kwargs=True)
-                result = roll.evaluate_cached(**kwargs)
-            elif DICE_200:
-                roll = func(expr, raw=True)
-                result = roll.evaluate_cached()
-            else:
-                result = func(expr)
-
+            with Typing(self.bot, ctx.message.channel):
+                task = partial(_roll_task, func, expr)
+                coro = self.bot.loop.run_in_executor(self.executor, task)
+                roll, kwargs, result = await coro
         except ParseBaseException as e:
             msg = warning('An error occured while parsing your expression:\n')
 
@@ -138,7 +190,9 @@ class Dice:
                 msg += ('\n\nFor a more detailed explanation, ask the bot '
                         'owner to update to Dice v2.2.0 or greater.')
 
-            await self.bot.say(msg)
+            # Using send_message here because apparently catching an
+            # exception from an executor'd function clobbers the stack...
+            await self.bot.send_message(ctx.message.channel, msg)
             return
 
         if DICE_200 and verbose:
@@ -165,7 +219,7 @@ class Dice:
         else:
             res = 'Empty result!'
 
-        res = ':game_die: %s' % res
+        res = ('🎲 `%s`%s🡪 %s') % (expr, ('\n' if len(res) > 20 else ' '), res)
 
         if DICE_200 and verbose:
             if len(res) + len(pages[-1]) >= (2000 - 1):
