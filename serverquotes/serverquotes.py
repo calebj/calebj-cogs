@@ -1,11 +1,18 @@
 import discord
 from discord.ext import commands
-from cogs.utils.dataIO import dataIO
-from .utils import checks
-from .utils.chat_formatting import escape_mass_mentions, pagify
+from discord.ext.commands.view import StringView
+from enum import Enum
+import math
 import os
-from random import choice as randchoice
+from random import randrange
+import sqlite3
+import struct
+from textwrap import dedent
+from typing import Iterable, Optional, Sequence
 
+from .utils.chat_formatting import escape_mass_mentions, pagify, warning, error
+from .utils.checks import check_permissions
+from .utils.dataIO import dataIO
 
 try:
     from tabulate import tabulate
@@ -14,10 +21,140 @@ except Exception as e:
 
 PATH = 'data/serverquotes/'
 JSON = PATH + 'quotes.json'
+SQLDB = PATH + 'quotes.sqlite'
 
+# Members with these permissions can and and remove quotes.
+# Also applies to anyone with the bot's mod or admin role.
+MANAGE_PERMS = ['administrator', 'manage_server']
+
+numbs = {
+    "back_10": "⏪",
+    "back": "⬅",
+    "exit": "❌",
+    "next": "➡",
+    "next_10": "⏩",
+    "random": "🎲",
+    "show": "🔍"
+}
+
+INIT_SQL = """
+CREATE TABLE IF NOT EXISTS quotes (
+    quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER,
+    server_quote_id INTEGER,
+    date_said TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    date_added TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    added_by INTEGER NOT NULL,
+    author_id INTEGER,
+    author_name TEXT,
+    quote TEXT NOT NULL,
+    migrated INTEGER DEFAULT 0,
+    UNIQUE (server_id, server_quote_id)
+);
+
+CREATE INDEX IF NOT EXISTS quotes_server_id ON quotes(server_id);
+CREATE INDEX IF NOT EXISTS quotes_server_quote_id ON quotes(server_quote_id);
+CREATE INDEX IF NOT EXISTS quotes_date_added ON quotes(date_added);
+CREATE INDEX IF NOT EXISTS quotes_added_by ON quotes(added_by);
+CREATE INDEX IF NOT EXISTS quotes_author_id ON quotes(author_id);
+
+CREATE TABLE IF NOT EXISTS server_counters (
+    server_id INTEGER PRIMARY KEY,
+    last_qid INTEGER DEFAULT 0
+);
+
+CREATE TRIGGER IF NOT EXISTS quotes_set_sqid AFTER INSERT ON quotes
+  WHEN NEW.server_quote_id IS NULL
+  BEGIN
+    REPLACE INTO server_counters
+        VALUES (NEW.server_id,
+                COALESCE((SELECT last_qid FROM server_counters sc WHERE sc.server_id IS NEW.server_id), 0) + 1);
+
+    UPDATE quotes
+        SET server_quote_id = (SELECT last_qid FROM server_counters WHERE server_counters.server_id IS NEW.server_id)
+        WHERE quotes.quote_id = NEW.quote_ID;
+  END;
+
+CREATE TRIGGER IF NOT EXISTS quotes_set_sqid_noinc AFTER INSERT ON quotes
+  WHEN NEW.server_quote_id IS NOT NULL
+  BEGIN
+    REPLACE INTO server_counters
+        VALUES (NEW.server_id,
+                MAX(COALESCE((SELECT last_qid FROM server_counters sc WHERE sc.server_id IS NEW.server_id), 0),
+                    COALESCE((SELECT MAX(server_quote_id) FROM quotes q WHERE q.server_id IS NEW.server_id), 0)));
+  END;
+
+CREATE TABLE IF NOT EXISTS nicknames (
+    server_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    nickname TEXT,
+    PRIMARY KEY (server_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS nicknames_server_id ON nicknames(server_id);
+CREATE INDEX IF NOT EXISTS nicknames_server_uid ON nicknames(server_id, user_id);
+
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL,
+    discriminator INTEGER NOT NULL,
+    avatar_url TEXT,
+    UNIQUE (username, discriminator)
+);
+"""
+
+FTS_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS quotes_fts USING FTS4(tokenize=porter);
+
+CREATE VIEW IF NOT EXISTS quotes_view AS
+  SELECT quotes.*,
+         qu.avatar_url AS author_avatar_url,
+         au.avatar_url AS added_by_avatar_url,
+         COALESCE(qn.nickname, qu.username || '#' || SUBSTR('0000' || qu.discriminator, -4, 4),
+                  author_name, 'missingno#' || author_id, '(unknown)') AS display_author,
+         COALESCE(an.nickname, au.username || '#' || SUBSTR('0000' || au.discriminator, -4, 4),
+                  'missingno#' || added_by, '(unknown)') AS display_added_by
+  FROM quotes
+  LEFT JOIN users qu ON qu.user_id = quotes.author_id
+  LEFT JOIN users au ON au.user_id = quotes.added_by
+  LEFT JOIN nicknames qn ON qn.server_id = quotes.server_id
+                        AND qn.user_id = quotes.author_id
+  LEFT JOIN nicknames an ON an.server_id = quotes.server_id
+                        AND an.user_id = quotes.added_by;
+
+CREATE TRIGGER IF NOT EXISTS quotes_fts_INSERT AFTER INSERT ON quotes
+  BEGIN
+    INSERT INTO quotes_fts(rowid, content) VALUES (NEW.quote_id, NEW.quote);
+  END;
+
+CREATE TRIGGER IF NOT EXISTS quotes_view_DELETE AFTER DELETE ON quotes
+  BEGIN
+    DELETE FROM quotes_fts WHERE rowid = OLD.rowid;
+  END;
+
+CREATE TRIGGER IF NOT EXISTS quotes_view_UPDATE AFTER UPDATE ON quotes
+  BEGIN
+    UPDATE quotes_fts SET content=NEW.quote WHERE quotes_fts.rowid = OLD.quote_id;
+  END;
+"""
+
+NAMES_SQL = """
+SELECT DISTINCT server_id, user_id, nickname, username, discriminator, avatar_url FROM (
+    SELECT server_id, author_id AS user_id FROM quotes
+    UNION
+    SELECT server_id, added_by AS user_id FROM quotes
+)
+LEFT NATURAL JOIN users
+LEFT NATURAL JOIN nicknames
+WHERE user_id IS NOT NULL;
+"""
+
+NOFTS_SQL = "CREATE TEMPORARY TABLE IF NOT EXISTS quotes_fts (content TEXT);"
+RANK_SQL = "bm25(MATCHINFO(quotes_fts, 'pcnalx'), 1)"
 
 # Analytics core
 import zlib, base64
+
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -47,199 +184,740 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.5.2'
+__version__ = '2.0.0'
+
+
+class SortField(Enum):
+    NONE = None
+    QUOTE_ID = 'quote_id'
+    SERVER_QUOTE_ID = 'server_quote_id'
+    DATE_ADDED = 'date_added'
+    DATE_SAID = 'date_said'
+
+
+class SortDirection(Enum):
+    NONE = None
+    ASC = 'ASC'
+    DESC = 'DESC'
+    RANDOM = 'RANDOM()'
+
+
+def okay(text):
+    return "\N{WHITE HEAVY CHECK MARK} {}".format(text)
+
+
+def check_fts4() -> bool:
+    with sqlite3.connect(':memory:') as con:
+        cur = con.execute('pragma compile_options;')
+        available_pragmas = cur.fetchall()
+        return ('ENABLE_FTS3',) in available_pragmas
+
+
+def _parse_match_info(buf):
+    # See http://sqlite.org/fts3.html#matchinfo
+    bufsize = len(buf)  # Length in bytes.
+    return [struct.unpack('@I', buf[i:i + 4])[0] for i in range(0, bufsize, 4)]
+
+
+# Okapi BM25 ranking implementation (FTS4 only).
+def bm25(raw_match_info, *args):
+    """
+    Usage:
+        # Format string *must* be pcnalx
+        # Second parameter to bm25 specifies the index of the column, on
+        # the table being queries.
+        bm25(matchinfo(document_tbl, 'pcnalx'), 1) AS rank
+    """
+    match_info = _parse_match_info(raw_match_info)
+    K = 1.2
+    B = 0.75
+    score = 0.0
+
+    P_O, C_O, N_O, A_O = range(4)
+    term_count = match_info[P_O]
+    col_count = match_info[C_O]
+    total_docs = match_info[N_O]
+    L_O = A_O + col_count
+    X_O = L_O + col_count
+
+    if not args:
+        weights = [1] * col_count
+    else:
+        weights = [0] * col_count
+        for i, weight in enumerate(args):
+            weights[i] = args[i]
+
+    for i in range(term_count):
+        for j in range(col_count):
+            weight = weights[j]
+            if weight == 0:
+                continue
+
+            avg_length = float(match_info[A_O + j])
+            doc_length = float(match_info[L_O + j])
+            if avg_length == 0:
+                D = 0
+            else:
+                D = 1 - B + (B * (doc_length / avg_length))
+
+            x = X_O + (3 * j * (i + 1))
+            term_frequency = float(match_info[x])
+            docs_with_term = float(match_info[x + 2])
+
+            idf = max(
+                math.log(
+                    (total_docs - docs_with_term + 0.5) /
+                    (docs_with_term + 0.5)),
+                0)
+            denom = term_frequency + (K * D)
+            if denom == 0:
+                rhs = 0
+            else:
+                rhs = (term_frequency * (K + 1)) / denom
+
+            score += (idf * rhs) * weight
+
+    return -score
 
 
 class ServerQuotes:
+    """
+    Store and retreive memorable quotes from your server
+    """
 
     def __init__(self, bot):
         self.bot = bot
-        self.quotes = dataIO.load_json(JSON)
+        self.db = sqlite3.connect(SQLDB, detect_types=sqlite3.PARSE_DECLTYPES)
+        self.db.row_factory = sqlite3.Row
+
+        with self.db as con:
+            con.executescript(INIT_SQL)
+
+            if check_fts4():
+                self.has_fts = True
+                con.executescript(FTS_SQL)
+                con.create_function('bm25', -1, bm25)
+            else:
+                self.has_fts = False
+                con.executescript(NOFTS_SQL)
+
+        self.bot.loop.create_task(self._populate_userinfo())
 
         try:
             self.analytics = CogAnalytics(self)
-        except Exception as error:
-            self.bot.logger.exception(error)
+        except Exception as e:
+            self.bot.logger.exception(e)
             self.analytics = None
 
-    def _get_random_quote(self, ctx):
-        sid = ctx.message.server.id
-        if sid not in self.quotes or len(self.quotes[sid]) == 0:
-            raise AssertionError("There are no quotes in this server!")
-        quotes = list(enumerate(self.quotes[sid]))
-        return randchoice(quotes)
+    def __unload(self):
+        self.save()
+        self.db.close()
 
-    def _get_random_author_quote(self, ctx, author):
-        sid = ctx.message.server.id
+    def save(self):
+        self.db.commit()
 
-        if sid not in self.quotes or len(self.quotes[sid]) == 0:
-            raise AssertionError("There are no quotes in this server!")
+    # Authorization/permission checks
 
-        if isinstance(author, discord.User):
-            uid = author.id
-            quotes = [(i, q) for i, q in enumerate(self.quotes[sid]) if q['author_id'] == uid]
+    async def _authorize_add(self, ctx):
+        if check_permissions(ctx, {k: True for k in MANAGE_PERMS}):
+            return True
         else:
-            quotes = [(i, q) for i, q in enumerate(self.quotes[sid]) if q['author_name'] == author]
+            return self.is_mod_or_superior(ctx.message.author)
 
-        if len(quotes) == 0:
-            raise commands.BadArgument("There are no quotes by %s." % author)
-        return randchoice(quotes)
-
-    def _add_quote(self, ctx, author, message):
-        sid = ctx.message.server.id
-        aid = ctx.message.author.id
-        if sid not in self.quotes:
-            self.quotes[sid] = []
-
-        author_name = 'Unknown'
-        author_id = None
-
-        if isinstance(author, discord.User):
-            author_name = author.display_name
-            author_id = author.id
-        elif isinstance(author, str):
-            author_name = author
-
-        quote = {'added_by': aid,
-                 'author_name': author_name,
-                 'author_id': author_id,
-                 'text': escape_mass_mentions(message)}
-
-        self.quotes[sid].append(quote)
-        dataIO.save_json(JSON, self.quotes)
-
-    def _quote_author(self, ctx, quote):
-        if quote['author_id']:
-            name = self._get_name_by_id(ctx, quote['author_id'])
-            if quote['author_name'] and not name:
-                name = quote['author_name']
-                name += " (non-present user ID#%s)" % (quote['author_id'])
-            return name
-        elif quote['author_name']:
-            return quote['author_name']
+    async def _authorize_del(self, ctx, record):
+        if record['added_by'] == int(ctx.message.author.id):
+            return True
+        elif check_permissions(ctx, {k: True for k in MANAGE_PERMS}):
+            return True
         else:
-            return "Unknown"
+            return self.is_mod_or_superior(ctx.message.author)
 
-    def _format_quote(self, ctx, quote):
-        qid, quote = quote
-        author = self._quote_author(ctx, quote)
-        return '"%s"\n—%s (quote #%i)' % (quote['text'], author, qid + 1)
+    # DB interface
 
-    def _get_name_by_id(self, ctx, uid):
-        member = discord.utils.get(ctx.message.server.members, id=uid)
-        if member:
-            return member.display_name
+    async def _populate_userinfo(self):
+        await self.bot.wait_until_ready()
+
+        with self.db:
+            users = {}
+            nicknames = {}
+            missing_ids = set()
+            updated_ids = set()
+
+            query = self.db.execute(NAMES_SQL)
+
+            for server_id, user_id, nickname, username, discriminator, avatar_url in query:
+                server = self.bot.get_server(str(server_id))
+
+                if not server:
+                    continue
+
+                member = server.get_member(str(user_id))
+
+                if not member:
+                    missing_ids.add(user_id)
+                    continue
+
+                m_avatar_url = member.avatar_url or member.default_avatar_url
+
+                if user_id not in users and (discriminator != member.discriminator or username != member.name
+                                             or avatar_url != m_avatar_url):
+                    users[user_id] = (member.name, member.discriminator, m_avatar_url)
+
+                nk = (server_id, user_id)
+                if nk not in nicknames and nickname != member.nick:
+                    nicknames[nk] = member.nick
+
+                updated_ids.add(user_id)
+
+            missing_ids -= updated_ids
+
+            if missing_ids:
+                missing_ids = set(str(x) for x in missing_ids)
+
+                for member in self.bot.get_all_members():
+                    if member.id in missing_ids:
+                        missing_ids.remove(member.id)
+                        users[int(member.id)] = (member.name, member.discriminator,
+                                                 member.avatar_url or member.default_avatar_url)
+
+            if users:
+                rows = [(uid, *t) for uid, t in users.items()]
+                self.db.executemany("REPLACE INTO users (user_id, username, discriminator, avatar_url) "
+                                    "VALUES (?, ?, ?, ?);", rows)
+
+            if nicknames:
+                rows = [(*nk, nickname) for nk, nickname in nicknames.items()]
+                self.db.executemany("REPLACE INTO nicknames (server_id, user_id, nickname) VALUES (?, ?, ?);", rows)
+
+    def _update_existing_member(self, member: discord.Member):
+        with self.db as con:
+            mid = int(member.id)
+            avatar = member.avatar_url or member.default_avatar_url
+            con.execute("UPDATE nicknames SET nickname = ? WHERE server_id = ? AND user_id = ?",
+                        (member.nick, member.server.id, mid))
+            con.execute("UPDATE users SET username = ?, discriminator = ?, avatar_url = ? WHERE user_id = ?",
+                        (member.name, member.discriminator, avatar, mid))
+
+    def _normalize_kwargs(self, kwargs):
+        kwargs = kwargs.copy()
+
+        for k in ('server', 'author'):
+            if k in kwargs:
+                obj = kwargs.pop(k)
+                kwargs[k + '_id'] = obj and obj.id
+
+                if k == 'author' and obj.server and 'server_id' not in kwargs:
+                    kwargs['server_id'] = obj.server.id
+
+        if isinstance(kwargs.get('added_by'), discord.User):
+            kwargs['added_by'] = kwargs['added_by'].id
+
+        for k in ('quote_id', 'server_id', 'server_quote_id', 'added_by', 'author_id'):
+            if isinstance(kwargs.get(k), str):
+                kwargs[k] = int(kwargs[k])
+
+        # for k in ('date_added', 'date_said'):
+        #     if isinstance(kwargs.get(k), datetime):
+        #         kwargs[k] = int(kwargs[k].timestamp())
+
+        if not isinstance(kwargs.get('migrated'), (bool, type(None))):
+            kwargs['migrated'] = bool(kwargs['migrated'])
+
+        return kwargs
+
+    def _build_where(self, kwargs, params=None, wheres=None):
+        if wheres is None:
+            wheres = []
+
+        if params is None:
+            params = []
+
+        for param, value in kwargs.items():
+            if isinstance(value, Iterable) and not isinstance(value, str):
+                if not isinstance(value, Sequence):
+                    value = tuple(value)
+
+                wheres.append(param + " IN (%s)" % ', '.join('?' * len(value)))
+                params.extend(value)
+            else:
+                wheres.append(param + " IS ?")
+                params.append(value)
+
+        if wheres:
+            where = " WHERE " + " AND ".join(wheres)
         else:
+            where = " "
+
+        return where, params
+
+    def _add_quote(self, **kwargs):
+        if 'message' in kwargs:
+            message = kwargs.pop('message')
+            kwargs['server'] = message.server
+            kwargs['quote'] = message.content
+            kwargs['author'] = message.author
+            kwargs['date_said'] = message.timestamp
+
+        params = self._normalize_kwargs(kwargs)
+
+        columns = list(params)
+        params = [params[k] for k in columns]
+        sql = "INSERT INTO quotes (%s) VALUES (%s);" % (', '.join(columns), ', '.join('?' * len(params)))
+
+        with self.db as con:
+            cur = con.execute(sql, params)
+            return cur.execute("SELECT * FROM quotes_view WHERE quote_id = last_insert_rowid();").fetchone()
+
+    def _delete_quotes(self, **kwargs) -> int:
+        kwargs = self._normalize_kwargs(kwargs)
+        where, params = self._build_where(kwargs)
+        sql = "DELETE FROM quotes " + where
+
+        with self.db as con:
+            cursor = con.execute(sql, params)
+            return cursor.rowcount
+
+    def _get_quotes(self, sort_field=SortField.QUOTE_ID, sort_direction=SortDirection.ASC, limit=None, **kwargs):
+        kwargs = self._normalize_kwargs(kwargs)
+        where, params = self._build_where(kwargs)
+
+        sql = "SELECT * FROM quotes_view " + where
+
+        if sort_direction is SortDirection.RANDOM:
+            sql += " ORDER BY RANDOM() "
+        elif isinstance(sort_field, SortField) and sort_field is not SortField.NONE:
+            sql += " ORDER BY `%s` " % sort_field.value
+
+            if isinstance(sort_direction, SortDirection) and sort_direction is not SortDirection.NONE:
+                sql += sort_direction.value
+
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        with self.db as con:
+            cur = con.execute(sql, params)
+            return cur.fetchall()
+
+    def _do_search(self, term, limit=10, offset=0, **kwargs):
+        kwargs = self._normalize_kwargs(kwargs)
+        where, params = self._build_where(kwargs, params=[term], wheres=["content MATCH ?"])
+
+        sql = dedent("""
+            SELECT SNIPPET(quotes_fts, '**', '**', '…') AS snippet, quotes_view.*
+            FROM quotes_fts
+            JOIN (
+                SELECT docid, bm25(MATCHINFO(quotes_fts, 'pcnalx'), 1) AS rank
+                FROM quotes_fts
+                JOIN quotes_view ON docid = quote_id
+                {where} ORDER BY rank DESC LIMIT ? OFFSET ?
+            ) AS rt USING(docid)
+            JOIN quotes_view ON quote_id = docid
+            WHERE quotes_fts MATCH ? ORDER BY rt.rank DESC
+            """.format(where=where))
+
+        params.extend((limit, offset, term))
+
+        with self.db as con:
+            cur = con.execute(sql, params)
+            return cur.fetchall()
+
+    # Commands
+
+    @commands.group(pass_context=True, no_pm=True, invoke_without_command=True)
+    async def quote(self, ctx, *, num_or_member: str = None):
+        """
+        Show/mange server quotes
+
+        If no valid subcommand is given, attempts to look up quote ID or member.
+        [p]quote random also works. Without any argument, invokes [p]quote list.
+        [p]quote help displays this help and all subcommands.
+        """
+        if num_or_member and num_or_member.strip(" '\"`").lower() == 'random':
+            ctx.view = StringView('yes')
+            await self.quote_list.invoke(ctx)
+        elif num_or_member and num_or_member.strip(" '\"`").lower() == 'help':
+            await self.bot.send_cmd_help(ctx)
+        elif num_or_member:
+            ctx.view = StringView(num_or_member)
+
+            if num_or_member.isdecimal():
+                await self.quote_show.invoke(ctx)
+            else:
+                await self.quote_by.invoke(ctx)
+        else:
+            await self.quote_list.invoke(ctx)
+
+    @quote.command(pass_context=True, name='list')
+    async def quote_list(self, ctx, jump_to_random: bool = False):
+        """
+        Allows you to page through a list of all quotes
+        """
+        records = self._get_quotes(server=ctx.message.server)
+
+        if not records:
+            await self.bot.say(warning("There are no quotes in this server!"))
+            return
+
+        if len(records) > 1:
+            page = randrange(len(records)) if jump_to_random else 0
+            await self.embed_menu(ctx, records, page=page)
+        else:
+            embed = self.format_quote_embed(records[0])
+            await self.bot.say(embed=embed)
+
+    @quote.command(pass_context=True, name='search', rest_is_raw=True)
+    @commands.cooldown(6, 60, commands.BucketType.channel)
+    async def quote_search(self, ctx, *, query: str):
+        """
+        Searches for quotes by quoted text
+
+        Results are sorted by relevance (uses sqlite FTS4 + Okapi BM25)
+        """
+        query = query.lstrip()
+        records = self._do_search(query, limit=50, server=ctx.message.server)
+
+        if not records:
+            await self.bot.say("Sorry, no matches.")
+            return
+
+        await self.embed_menu(ctx, records, use_snippet=True)
+
+    @quote.command(pass_context=True, name='show')
+    @commands.cooldown(6, 60, commands.BucketType.channel)
+    async def quote_show(self, ctx, num: int):
+        """
+        Displays a stored quote by its number
+        """
+        records = self._get_quotes(server=ctx.message.server, server_quote_id=num)
+
+        if not records:
+            await self.bot.say(warning("Couldn't find that quote in this server."))
+            return
+
+        embed = self.format_quote_embed(records[0])
+        await self.bot.say(embed=embed)
+
+    @commands.cooldown(6, 60, commands.BucketType.channel)
+    @quote.command(pass_context=True, name='by')
+    async def quote_by(self, ctx, member: discord.Member, show_all: bool = False):
+        """
+        Displays quotes by the specified member
+
+        If show_all is a trueish value, page through all quotes by the member
+        """
+        kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
+        records = self._get_quotes(server=ctx.message.server, author=member, **kwargs)
+
+        if not records:
+            await self.bot.say(warning("There aren't any quotes by %s in this server yet." % member))
+            return
+
+        if len(records) > 1:
+            await self.embed_menu(ctx, records)
+        else:
+            embed = self.format_quote_embed(records[0])
+            await self.bot.say(embed=embed)
+
+    @commands.cooldown(6, 60, commands.BucketType.channel)
+    @quote.command(pass_context=True, name='me', aliases=['myself', 'self'])
+    async def quote_self(self, ctx, show_all: bool = False):
+        """
+        Displays quotes by the specified member
+
+        If show_all is a trueish value, page through all quotes by the member
+        """
+        kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
+        records = self._get_quotes(server=ctx.message.server, author=ctx.message.author, **kwargs)
+
+        if not records:
+            await self.bot.say(warning("There aren't any quotes by you in this server yet."))
+            return
+
+        embed = self.format_quote_embed(records[0])
+        await self.bot.say(embed=embed)
+
+    @quote.command(pass_context=True, name='add', rest_is_raw=True)
+    async def quote_add(self, ctx, author: discord.Member, *, quote: str):
+        """
+        Adds a member's quote to the server quote database
+
+        The first argument must be the author's nickname or a mention.
+        The rest of the command is interpreted as the quote itself.
+
+        To add a quote from a non-member, use [p]quote add-nm
+        Or, to add a quote directly from a message, use [p]quote add-msg .
+        """
+        if not await self._authorize_add(ctx):
+            return
+
+        quote = quote.lstrip()  # remove whitespace
+
+        # remove quotes but only if symmetric
+        if quote.startswith('"') and quote.endswith('"'):
+            quote = quote[1:-1]
+
+        if quote:
+            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author=author)
+            await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
+        else:
+            await self.bot.say(warning("Quote text is empty!"))
+
+    @quote.command(pass_context=True, name='add-nm', rest_is_raw=True)
+    async def quote_add_nm(self, ctx, author: str, *, quote: str):
+        """
+        Adds a quote to the server quote database
+
+        The first argument is the author. If it has spaces, use double quotes.
+        The rest of the command is interpreted as the quote itself.
+
+        Quotes added using this command will not be tied to a member.
+        To add a quote from a member, use [p]quote add .
+        Or, to add a quote directly from a message, use [p]quote add-msg .
+        """
+        if not await self._authorize_add(ctx):
+            return
+
+        quote = quote.lstrip()  # remove whitespace
+
+        # remove quotes but only if symmetric
+        if quote.startswith('"') and quote.endswith('"'):
+            quote = quote[1:-1]
+
+        if quote:
+            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author=author)
+            await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
+        else:
+            await self.bot.say(warning("Quote text is empty!"))
+
+    @quote.command(pass_context=True, name='add-msg')
+    async def quote_addmsg(self, ctx, message_id: int, channel: discord.Channel = None):
+        """
+        Adds a message to the server quote database
+
+        The full text of the message is used. If the message belongs to
+        another channel, specify it as the second argument.
+        """
+
+        try:
+            msg = await self.bot.get_message(channel or ctx.message.channel, str(message_id))
+        except discord.errors.NotFound:
+            await self.bot.say(warning("Couldn't find that message in %s."
+                                       % (channel.mention if channel else 'this channel')))
+            return
+
+        if msg.content:
+            ret = self._add_quote(message=msg, added_by=ctx.message.author)
+            await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
+        else:
+            await self.bot.say(warning("Quote text is empty!"))
+
+    @quote.command(pass_context=True, name='remove', aliases=['rm'])
+    async def quote_remove(self, ctx, num: int):
+        """
+        Deletes a quote by its number
+        """
+
+        match = self._get_quotes(server=ctx.message.server, server_quote_id=num)
+
+        if not match:
+            await self.bot.say(warning("Couldn't find that quote in this server."))
+            return
+        elif not await self._authorize_del(ctx, match[0]):
+            return
+
+        embed = self.format_quote_embed(match[0])
+
+        if not await self.confirm_thing(ctx, thing="delete this quote", require_yn=True, embed=embed):
+            return
+
+        self._delete_quotes(quote_id=match[0]['quote_id'])
+        await self.bot.say(okay("Quote #%i deleted.") % num)
+
+    # Utility
+
+    def format_quote_embed(self, record, extra=None, use_snippet=False) -> discord.Embed:
+        timestamp = record['date_said'] if 'date_said' in record else record['date_added']
+        description = record['snippet'] if use_snippet else record['quote']
+
+        embed = discord.Embed(description=description, timestamp=timestamp or discord.Embed.Empty)
+
+        footer = ((extra + ' | quote') if extra else 'Quote') + ' #%i' % record['server_quote_id']
+
+        if record['display_added_by']:
+            footer += ' | added by ' + record['display_added_by']
+
+        embed.set_footer(text=footer, icon_url=record['added_by_avatar_url'] or discord.Embed.Empty)
+
+        embed.set_author(name='%s' % record['display_author'],
+                         icon_url=record['author_avatar_url'] or discord.Embed.Empty)
+
+        return embed
+
+    async def embed_menu(self, ctx, records: list, message: discord.Message = None,
+                         page=0, timeout: int = 30, edata=None, use_snippet=None):
+        """
+        menu control logic for this taken from
+        https://github.com/Lunar-Dust/Dusty-Cogs/blob/master/menu/menu.py
+        """
+
+        num_records = len(records)
+        record = records[page]
+        content = 'Result %i/%i:' % (page + 1, num_records)
+        embed = self.format_quote_embed(record, use_snippet=use_snippet)
+
+        expected = ["➡", "⬅", "❌", "⏩", "⏪", "🎲", "🔍"]
+
+        if not message:
+            message = await self.bot.send_message(ctx.message.channel, content, embed=embed)
+
+            if num_records > 10:
+                await self.bot.add_reaction(message, "⏪")
+
+            if num_records > 1:
+                await self.bot.add_reaction(message, "⬅")
+
+            await self.bot.add_reaction(message, "❌")
+
+            if use_snippet is not None:
+                await self.bot.add_reaction(message, "🔍")
+
+            if num_records > 1:
+                await self.bot.add_reaction(message, "🎲")
+                await self.bot.add_reaction(message, "➡")
+
+            if num_records > 10:
+                await self.bot.add_reaction(message, "⏩")
+
+        else:
+            message = await self.bot.edit_message(message, content, embed=embed)
+
+        react = await self.bot.wait_for_reaction(message=message, user=ctx.message.author,
+                                                 timeout=timeout, emoji=expected)
+        if react is None:
+            try:
+                try:
+                    await self.bot.clear_reactions(message)
+                except Exception:
+                    if num_records > 10:
+                        await self.bot.remove_reaction(message, "⏪", self.bot.user)
+
+                    if num_records > 1:
+                        await self.bot.remove_reaction(message, "⬅", self.bot.user)
+
+                    await self.bot.remove_reaction(message, "❌", self.bot.user)
+
+                    if use_snippet is not None:
+                        await self.bot.remove_reaction(message, "🔍", self.bot.user)
+
+                    if num_records > 1:
+                        await self.bot.remove_reaction(message, "🎲", self.bot.user)
+                        await self.bot.remove_reaction(message, "➡", self.bot.user)
+
+                    if num_records > 10:
+                        await self.bot.remove_reaction(message, "⏩", self.bot.user)
+            except Exception:
+                pass
+
             return None
 
-    def _get_quote(self, ctx, author_or_num=None):
-        sid = ctx.message.server.id
-        if type(author_or_num) is discord.Member:
-            return self._get_random_author_quote(ctx, author_or_num)
-        if author_or_num:
+        reacts = {v: k for k, v in numbs.items()}
+        action = reacts[react.reaction.emoji]
+
+        if action == "back_10":
+            page -= 10
+        elif action == "back":
+            page -= 1
+        elif action == "random":
+            page += randrange(num_records - 1) + 1
+        elif action == "show":
+            use_snippet = not use_snippet
+        elif action == "next":
+            page += 1
+        elif action == "next_10":
+            page += 10
+        else:
             try:
-                quote_id = int(author_or_num)
-                if quote_id > 0 and quote_id <= len(self.quotes[sid]):
-                    return (quote_id - 1, self.quotes[sid][quote_id - 1])
-                else:
-                    raise commands.BadArgument("Quote #%i does not exist." % quote_id)
-            except ValueError:
+                return await self.bot.delete_message(message)
+            except Exception:
                 pass
 
-            try:
-                author = commands.MemberConverter(ctx, author_or_num).convert()
-            except commands.errors.BadArgument:
-                author = author_or_num.strip(' \t\n\r\x0b\x0c-–—')  # whitespace + dashes
-            return self._get_random_author_quote(ctx, author)
-
-        return self._get_random_quote(ctx)
-
-    @commands.command(pass_context=True, no_pm=True)
-    @checks.mod_or_permissions(manage_messages=True)
-    async def rmquote(self, ctx, num: int):
-        """Deletes a quote by its number
-
-           Use [p]lsquotes to find quote numbers
-           Example: !delquote 3"""
-        sid = ctx.message.server.id
-        if num > 0 and num <= len(self.quotes[sid]):
-            del self.quotes[sid][num - 1]
-            await self.bot.say("Quote #%i deleted." % num)
-            dataIO.save_json(JSON, self.quotes)
-        else:
-            await self.bot.say("Quote #%i does not exist." % num)
-
-    @commands.command(pass_context=True, no_pm=True)
-    async def lsquotes(self, ctx):
-        """Displays a list of all quotes"""
-        sid = ctx.message.server.id
-        quotes = self.quotes.get(sid, [])
-        if not quotes:
-            await self.bot.say("There are no quotes in this server!")
-            return
-        else:
-            msg = await self.bot.say("Sending you the list via DM.")
-
-        header = ['#', 'Author', 'Added by', 'Quote']
-        table = []
-        for i, q in enumerate(quotes):
-            text = q['text']
-            if len(text) > 60:
-                text = text[:60 - 3] + '...'
-            name = self._get_name_by_id(ctx, q['added_by'])
-            if not name:
-                name = "(non-present user ID#%s)" % q['added_by']
-            table.append((i + 1, self._quote_author(ctx, q), name, text))
-        tabulated = tabulate(table, header)
         try:
-            for page in pagify(tabulated, ['\n']):
-                await self.bot.whisper('```\n%s\n```' % page)
-        except discord.errors.HTTPException:
-            err = "I can't send the list unless you allow DMs from server members."
-            await self.bot.edit_message(msg, new_content=err)
+            await self.bot.remove_reaction(message, react.reaction.emoji, ctx.message.author)
+        except Exception as e:
+            print(e)
+            pass
 
-    @commands.command(pass_context=True, no_pm=True)
-    @checks.mod_or_permissions(manage_messages=True)
-    async def addquote(self, ctx, message: str, *, author: str = None):
-        """Adds a quote to the server quote list. The quote must be enclosed
-        in \"double quotes\". If a member mention or name is the last argument,
-        the quote will be stored as theirs. If not, the last argument will
-        be stored as the quote's author. If left empty, "Unknown" is used.
-        """
-        if author:
-            try:
-                author = commands.MemberConverter(ctx, author).convert()
-            except commands.errors.BadArgument:
-                author = author.strip(' \t\n\r\x0b\x0c-–—')  # whitespace + dashes
-                pass
+        next_page = page % num_records
 
-        self._add_quote(ctx, author, message)
-        await self.bot.say("Quote added.")
+        return await self.embed_menu(ctx, records, message=message, page=next_page, timeout=timeout,
+                                     edata=edata, use_snippet=use_snippet)
 
-    @commands.command(pass_context=True, no_pm=True)
-    @commands.cooldown(6, 60, commands.BucketType.channel)
-    async def quote(self, ctx, *, author_or_num: str = None):
-        """Say a stored quote!
-
-        Without any arguments, this command randomly selects from all stored
-        quotes. If you supply an author name, it randomly selects from among
-        that author's quotes. Finally, if given a number, that specific quote
-        will be said, assuming it exists. Use [p]lsquotes to show all quotes.
-        """
-
-        sid = ctx.message.server.id
-        if sid not in self.quotes or len(self.quotes[sid]) == 0:
-            await self.bot.say("There are no quotes in this server!")
-            return
-
-        try:
-            quote = self._get_quote(ctx, author_or_num)
-        except commands.BadArgument:
-            if author_or_num.lower().strip() in ['me', 'myself', 'self']:
-                quote = self._get_quote(ctx, ctx.message.author)
+    async def confirm_thing(self, ctx, *, thing: Optional[str] = None, confirm_msg: Optional[str] = None,
+                            require_yn: bool = False, timeout: Optional[int] = 30, **kwargs):
+        if not confirm_msg:
+            if thing:
+                confirm_msg = warning('Are you sure you want to %s?' % thing)
             else:
-                raise
-        await self.bot.say(self._format_quote(ctx, quote))
+                confirm_msg = warning('Are you sure?')
+
+        if not (isinstance(timeout, (int, float)) and timeout > 0) and timeout is not None:
+            raise ValueError('timeout parameter must be a number > 0 or None')
+        elif timeout:
+            confirm_msg += ' (reply `yes` within %is to confirm, `no` to cancel)' % timeout
+        else:
+            confirm_msg += ' (reply `yes` to confirm or `no` to cancel)'
+
+        await self.bot.say(confirm_msg, **kwargs)
+
+        while True:
+            reply = await self.bot.wait_for_message(channel=ctx.message.channel, author=ctx.message.author,
+                                                    timeout=timeout)
+
+            if reply is None:
+                await self.bot.say('Timed out waiting for a response.')
+                return None
+            elif reply.content.strip(' `"\'').lower() == 'yes':
+                return True
+            elif require_yn and reply.content.strip(' `"\'').lower() != 'no':
+                await self.bot.say("Please specify `yes` or `no`.")
+                continue
+            else:
+                await self.bot.say('Command cancelled.')
+                return False
+
+    def is_mod_or_superior(self, obj):  # Copied from red core mod.py
+        if not isinstance(obj, (discord.Message, discord.Member, discord.Role)):
+            raise TypeError('Only messages, members or roles may be passed')
+
+        server = obj.server
+        admin_role = self.bot.settings.get_server_admin(server)
+        mod_role = self.bot.settings.get_server_mod(server)
+
+        if isinstance(obj, discord.Role):
+            return obj.name in [admin_role, mod_role]
+        elif isinstance(obj, discord.Message):
+            user = obj.author
+        elif isinstance(obj, discord.Member):
+            user = obj
+        else:
+            return False
+
+        if user.id == self.bot.settings.owner:
+            return True
+        elif discord.utils.get(user.roles, name=admin_role):
+            return True
+        elif discord.utils.get(user.roles, name=mod_role):
+            return True
+
+        return False
+
+    # Event listeners
+
+    async def on_member_update(self, before, after):
+        if (before.nick != after.nick or before.name != after.name or
+                before.discriminator != after.discriminator or before.avatar != after.avatar):
+            self._update_existing_member(after)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
@@ -253,9 +931,23 @@ def check_folder():
 
 
 def check_file():
-    if not dataIO.is_valid_json(JSON):
-        print("Creating default quotes.json...")
-        dataIO.save_json(JSON, {})
+    if dataIO.is_valid_json(JSON):
+        print("Migrating quotes.json...")
+        data = dataIO.load_json(JSON)
+        db = sqlite3.connect(SQLDB)
+        rows = []
+
+        db.executescript(INIT_SQL + FTS_SQL)
+
+        for sid, sdata in data.items():
+            for entry in sdata:
+                rows.append((sid, entry['added_by'], entry['author_id'],
+                             entry['author_name'], entry['text']))
+        with db:
+            db.executemany("INSERT INTO quotes(server_id, added_by, author_id, author_name, quote, migrated) "
+                           "VALUES (?, ?, ?, ?, ?, 1)", rows)
+
+        os.rename(JSON, JSON.replace('.', '_migrated.'))
 
 
 def setup(bot):

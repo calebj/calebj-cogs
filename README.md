@@ -14,6 +14,7 @@ This repo contains cogs I've written, as well as those I've modified and republi
   * [How do I use punish?](#how-do-i-use-punish)
   * [How do I use recensor?](#how-do-i-use-recensor)
   * [How do I use scheduler?](#how-do-i-use-scheduler)
+  * [How do I use serverquotes?](#how-do-i-use-serverquotes)
   * [How do I use watchdog?](#how-do-i-use-watchdog)
   * [How do I use xorole?](#how-do-i-use-xorole)
 * [Contributing](#contributing)
@@ -54,7 +55,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * purgepins: Delete pin notification messages after a per-channel interval.
 * recensor: Filter messages using regular expressions
 * scheduler: Squid's [scheduler cog][squid_scheduler], with enhancements.
-* serverquotes: Store and recall memorable quotes for your server.
+* serverquotes: Store and recall memorable quotes in your server.
 * sinfo: Simple text dump of server and channel information.
 * watchdog: Helps systemd know when your bot is functioning. See [below](#how-do-i-use-watchdog).
 * xorole: Self-role functionality with single-membership role sets.
@@ -289,6 +290,24 @@ Moderators and members with the "manage messages" permission can run these subco
   * Also shows scheduled oneshots. Cancel them by using `remove` with the full `UID-name`.
 
 An example application of twostage is to have a self-assigned role (using selfrole from the [Squid Admin cog](http://cogs.red/cogs/tekulvw/Squid-Plugins/admin/)) that is added and then removed after a custom delay, using a single alias.
+
+### How do I use serverquotes?
+Anyone can run these commands:
+* `[p]quote by <member> [show_all]` : displays one or all quotes by a member
+* `[p]quote list [random]` : displays all quotes, optionally jumping to a random one
+* `[p]quote me [show_all]` : displays one or all quotes by the calling member
+* `[p]quote search <query>` : searches quotes by text and displays them in order of relevance
+* `[p]quote show <num>` : displays an individual quote by its number
+
+Moderators, admins, and people with Manage Messages permissions can use:
+* `[p]quote add <member> <quote ...>` : adds a quote by the specified member
+* `[p]quote add-msg <message ID> [channel]` : adds an entire message as a quote
+  * channel is required if the message is from a different channel than where the command is run
+* `[p]quote add-nm <author> <quote ...>` : adds a quote by the specified author
+  * this allows quotes from non-members to be added, but they'll onlt show in the global/random list
+* `[p]quote remove <num>` : deletes a quote by its number
+
+The cog uses sqlite's [FTS4 extension](https://sqlite.org/fts3.html) for text indexing with a [Porter stemming tokenizer](https://tartarus.org/martin/PorterStemmer/), and ranks search results by the [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) algorithm.
 
 ### How do I use watchdog?
 First of all, if you aren't running your bot on a Linux machine with systemd, or another service manager that listens for watchdog messages in the same way, **this cog won't do anything for you**. Sorry.
