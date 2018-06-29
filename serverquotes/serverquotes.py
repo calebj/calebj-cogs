@@ -184,7 +184,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.0.0'
+__version__ = '2.0.1'
 
 
 class SortField(Enum):
@@ -733,6 +733,23 @@ class ServerQuotes:
 
         self._delete_quotes(quote_id=match[0]['quote_id'])
         await self.bot.say(okay("Quote #%i deleted.") % num)
+
+    # Legacy command stubs
+
+    @commands.command(pass_context=True, no_pm=True)
+    async def lsquotes(self, ctx):
+        await self.bot.say("This command is deprecated; use `%squote list` instead.\n\n"
+                           "This notice will be removed in a future release." % ctx.prefix)
+
+    @commands.command(pass_context=True, no_pm=True)
+    async def rmquote(self, ctx):
+        await self.bot.say("This command is deprecated; use `%squote remove <num>` instead.\n\n"
+                           "This notice will be removed in a future release." % ctx.prefix)
+
+    @commands.command(pass_context=True, no_pm=True)
+    async def addquote(self, ctx):
+        await self.bot.say("This command is deprecated; use `%squote add <member> <quote ...>` instead.\n\n"
+                           "This notice will be removed in a future release." % ctx.prefix)
 
     # Utility
 
