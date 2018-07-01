@@ -294,6 +294,7 @@ An example application of twostage is to have a self-assigned role (using selfro
 ### How do I use serverquotes?
 Anyone can run these commands:
 * `[p]quote by <member> [show_all]` : displays one or all quotes by a member
+* `[p]quote by-nm <author> [show_all]` : displays one or all quotes by a non-member author
 * `[p]quote list [random]` : displays all quotes, optionally jumping to a random one
 * `[p]quote me [show_all]` : displays one or all quotes by the calling member
 * `[p]quote search <query>` : searches quotes by text and displays them in order of relevance
@@ -304,7 +305,7 @@ Moderators, admins, and people with Manage Messages permissions can use:
 * `[p]quote add-msg <message ID> [channel]` : adds an entire message as a quote
   * channel is required if the message is from a different channel than where the command is run
 * `[p]quote add-nm <author> <quote ...>` : adds a quote by the specified author
-  * this allows quotes from non-members to be added, but they'll onlt show in the global/random list
+  * this allows quotes from non-members to be added; use `[p]quote by-nm` to display them
 * `[p]quote remove <num>` : deletes a quote by its number
 
 The cog uses sqlite's [FTS4 extension](https://sqlite.org/fts3.html) for text indexing with a [Porter stemming tokenizer](https://tartarus.org/martin/PorterStemmer/), and ranks search results by the [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) algorithm.

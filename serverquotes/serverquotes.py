@@ -1,3 +1,4 @@
+import aiohttp
 import discord
 from discord.ext import commands
 from discord.ext.commands.view import StringView
@@ -5,6 +6,7 @@ from enum import Enum
 import math
 import os
 from random import randrange
+import re
 import sqlite3
 import struct
 from textwrap import dedent
@@ -22,6 +24,9 @@ except Exception as e:
 PATH = 'data/serverquotes/'
 JSON = PATH + 'quotes.json'
 SQLDB = PATH + 'quotes.sqlite'
+
+# message links in embeds don't work yet
+# PERMALINK = 'https://discordapp.com/channels/{server_id}/{channel_id}/{message_id}'
 
 # Members with these permissions can and and remove quotes.
 # Also applies to anyone with the bot's mod or admin role.
@@ -42,21 +47,29 @@ CREATE TABLE IF NOT EXISTS quotes (
     quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
     server_id INTEGER,
     server_quote_id INTEGER,
-    date_said TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    date_added TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    date_said TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     added_by INTEGER NOT NULL,
     author_id INTEGER,
-    author_name TEXT,
-    quote TEXT NOT NULL,
+    author_name TEXT COLLATE NOCASE,
+    quote TEXT,
     migrated INTEGER DEFAULT 0,
+    image_url TEXT,
+    attachment_url TEXT,
+    attachment_filename TEXT,
+    channel_id INTEGER,
+    message_id INTEGER,
     UNIQUE (server_id, server_quote_id)
 );
 
 CREATE INDEX IF NOT EXISTS quotes_server_id ON quotes(server_id);
 CREATE INDEX IF NOT EXISTS quotes_server_quote_id ON quotes(server_quote_id);
 CREATE INDEX IF NOT EXISTS quotes_date_added ON quotes(date_added);
+CREATE INDEX IF NOT EXISTS quotes_date_said ON quotes(date_said);
 CREATE INDEX IF NOT EXISTS quotes_added_by ON quotes(added_by);
 CREATE INDEX IF NOT EXISTS quotes_author_id ON quotes(author_id);
+CREATE INDEX IF NOT EXISTS quotes_channel_id ON quotes(channel_id);
+CREATE INDEX IF NOT EXISTS quotes_message_id ON quotes(message_id);
 
 CREATE TABLE IF NOT EXISTS server_counters (
     server_id INTEGER PRIMARY KEY,
@@ -127,12 +140,16 @@ CREATE TRIGGER IF NOT EXISTS quotes_fts_INSERT AFTER INSERT ON quotes
     INSERT INTO quotes_fts(rowid, content) VALUES (NEW.quote_id, NEW.quote);
   END;
 
-CREATE TRIGGER IF NOT EXISTS quotes_view_DELETE AFTER DELETE ON quotes
+DROP TRIGGER IF EXISTS quotes_view_UPDATE;
+DROP TRIGGER IF EXISTS quotes_view_DELETE;
+
+CREATE TRIGGER IF NOT EXISTS quotes_DELETE AFTER DELETE ON quotes
   BEGIN
     DELETE FROM quotes_fts WHERE rowid = OLD.rowid;
   END;
 
-CREATE TRIGGER IF NOT EXISTS quotes_view_UPDATE AFTER UPDATE ON quotes
+CREATE TRIGGER IF NOT EXISTS quotes_UPDATE AFTER UPDATE ON quotes
+  WHEN OLD.quote <> NEW.quote
   BEGIN
     UPDATE quotes_fts SET content=NEW.quote WHERE quotes_fts.rowid = OLD.quote_id;
   END;
@@ -183,7 +200,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.0.2'
+__version__ = '2.1.0'
 
 
 class SortField(Enum):
@@ -300,6 +317,7 @@ class ServerQuotes:
                 self.has_fts = False
 
         self.bot.loop.create_task(self._populate_userinfo())
+        self.bot.loop.create_task(self._upgrade_210())
 
         try:
             self.analytics = CogAnalytics(self)
@@ -387,14 +405,57 @@ class ServerQuotes:
                 rows = [(*nk, nickname) for nk, nickname in nicknames.items()]
                 self.db.executemany("REPLACE INTO nicknames (server_id, user_id, nickname) VALUES (?, ?, ?);", rows)
 
-    def _update_existing_member(self, member: discord.Member):
+    async def _upgrade_210(self):
         with self.db as con:
-            mid = int(member.id)
-            avatar = member.avatar_url or member.default_avatar_url
-            con.execute("UPDATE nicknames SET nickname = ? WHERE server_id = ? AND user_id = ?",
-                        (member.nick, member.server.id, mid))
-            con.execute("UPDATE users SET username = ?, discriminator = ?, avatar_url = ? WHERE user_id = ?",
-                        (member.name, member.discriminator, avatar, mid))
+            cols = {c['name'] for c in con.execute("PRAGMA table_info(quotes);")}
+
+            for cname, ctype in {
+                'image_url'           : 'TEXT',
+                'attachment_url'      : 'TEXT',
+                'attachment_filename' : 'TEXT',
+                'message_id'          : 'INTEGER',
+                'channel_id'          : 'INTEGER'
+            }.items():
+                if cname not in cols:
+                    con.execute("ALTER TABLE quotes ADD COLUMN {} {};".format(cname, ctype))
+
+        url_regex = re.compile(r"(?is)\b(?:https?://)(?:[a-z0-9]\.?)+/[^\s]+")
+
+        with self.db as con:
+            async with aiohttp.ClientSession() as session:
+                for row in con.execute("SELECT quote_id, quote, image_url FROM quotes;"):
+                    if row['image_url'] is not None:
+                        continue
+
+                    match = url_regex.search(row['quote'])
+
+                    if not match:
+                        continue
+
+                    url = match.group()
+
+                    async with session.head(url, allow_redirects=True) as response:
+                        if response.status != 200 or not response.headers['Content-Type'].lower().startswith('image/'):
+                            continue
+
+                    params = [row['quote'].replace(url, ''), url, row['quote_id']]
+                    con.execute("UPDATE quotes SET quote = ?, image_url = ? WHERE quote_id = ?", params)
+
+    def _update_member(self, member: discord.Member, update_only=False):
+        mid = int(member.id)
+        avatar = member.avatar_url or member.default_avatar_url
+
+        with self.db as con:
+            if update_only:
+                con.execute("UPDATE nicknames SET nickname = ? WHERE server_id = ? AND user_id = ?",
+                            (member.nick, member.server.id, mid))
+                con.execute("UPDATE users SET username = ?, discriminator = ?, avatar_url = ? WHERE user_id = ?",
+                            (member.name, member.discriminator, avatar, mid))
+            else:
+                con.execute("REPLACE INTO nicknames(server_id, user_id, nickname) VALUES (?, ?, ?);",
+                            (member.server.id, mid, member.nick))
+                con.execute("REPLACE INTO users(user_id, username, discriminator, avatar_url) VALUES (?, ?, ?, ?);",
+                            (mid, member.name, member.discriminator, avatar))
 
     def _normalize_kwargs(self, kwargs):
         kwargs = kwargs.copy()
@@ -410,7 +471,7 @@ class ServerQuotes:
         if isinstance(kwargs.get('added_by'), discord.User):
             kwargs['added_by'] = kwargs['added_by'].id
 
-        for k in ('quote_id', 'server_id', 'server_quote_id', 'added_by', 'author_id'):
+        for k in ('quote_id', 'server_id', 'server_quote_id', 'added_by', 'author_id', 'message_id', 'channel_id'):
             if isinstance(kwargs.get(k), str):
                 kwargs[k] = int(kwargs[k])
 
@@ -448,15 +509,40 @@ class ServerQuotes:
 
         return where, params
 
-    def _add_quote(self, **kwargs):
+    def _add_quote(self, ctx, **kwargs):
         if 'message' in kwargs:
             message = kwargs.pop('message')
             kwargs['server'] = message.server
             kwargs['quote'] = message.content
             kwargs['author'] = message.author
             kwargs['date_said'] = message.timestamp
+        else:
+            message = ctx.message
+
+        kwargs['message_id'] = message.id
+        kwargs['channel_id'] = message.channel.id
+
+        if message.embeds:
+            data = message.embeds[0]
+            if data['type'] == 'image':
+                kwargs['image_url'] = data['url']
+
+                if kwargs['quote']:
+                    kwargs['quote'] = kwargs['quote'].replace(data['url'], '')
+
+        if message.attachments:
+            file = message.attachments[0]
+            if file['url'].lower().endswith(('png', 'jpeg', 'jpg', 'gif', 'webp')) \
+                    or ('width' in file and 'height' in file):
+                kwargs['image_url'] = file['url']
+            else:
+                kwargs['attachment_url'] = file['url']
+                kwargs['attachment_filename'] = file['filename']
 
         params = self._normalize_kwargs(kwargs)
+
+        if 'quote' not in params:
+            params['quote'] = ''
 
         columns = list(params)
         params = [params[k] for k in columns]
@@ -607,7 +693,7 @@ class ServerQuotes:
     @quote.command(pass_context=True, name='by')
     async def quote_by(self, ctx, member: discord.Member, show_all: bool = False):
         """
-        Displays quotes by the specified member
+        Displays a random quote by the specified member
 
         If show_all is a trueish value, page through all quotes by the member
         """
@@ -616,6 +702,27 @@ class ServerQuotes:
 
         if not records:
             await self.bot.say(warning("There aren't any quotes by %s in this server yet." % member))
+            return
+
+        if len(records) > 1:
+            await self.embed_menu(ctx, records)
+        else:
+            embed = self.format_quote_embed(records[0])
+            await self.bot.say(embed=embed)
+
+    @commands.cooldown(6, 60, commands.BucketType.channel)
+    @quote.command(pass_context=True, name='by-nm')
+    async def quote_by_nm(self, ctx, author: str, show_all: bool = False):
+        """
+        Displays a random by the specified (non-member) author
+
+        If show_all is a trueish value, page through all quotes by the author
+        """
+        kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
+        records = self._get_quotes(server=ctx.message.server, author_name=author, **kwargs)
+
+        if not records:
+            await self.bot.say(warning("There aren't any quotes by %s in this server yet." % author))
             return
 
         if len(records) > 1:
@@ -656,20 +763,23 @@ class ServerQuotes:
         if not await self._authorize_add(ctx):
             return
 
-        quote = quote.lstrip()  # remove whitespace
+        if quote is not None:
+            quote = quote.lstrip()  # remove whitespace
 
-        # remove quotes but only if symmetric
-        if quote.startswith('"') and quote.endswith('"'):
-            quote = quote[1:-1]
+            # remove quotes but only if symmetric
+            if quote.startswith('"') and quote.endswith('"'):
+                quote = quote[1:-1]
 
-        if quote:
-            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author=author)
+        if quote or ctx.message.attachments or (ctx.message.embeds and ctx.message.embeds[0].get('type') == 'image'):
+            self._update_member(ctx.message.author)
+            self._update_member(author)
+            ret = self._add_quote(ctx, quote=quote, added_by=ctx.message.author, author=author)
             await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
         else:
-            await self.bot.say(warning("Quote text is empty!"))
+            await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
     @quote.command(pass_context=True, name='add-nm', rest_is_raw=True)
-    async def quote_add_nm(self, ctx, author: str, *, quote: str):
+    async def quote_add_nm(self, ctx, author: str, *, quote: str = None):
         """
         Adds a quote to the server quote database
 
@@ -683,20 +793,22 @@ class ServerQuotes:
         if not await self._authorize_add(ctx):
             return
 
-        quote = quote.lstrip()  # remove whitespace
+        if quote is not None:
+            quote = quote.lstrip()  # remove whitespace
 
-        # remove quotes but only if symmetric
-        if quote.startswith('"') and quote.endswith('"'):
-            quote = quote[1:-1]
+            # remove quotes but only if symmetric
+            if quote.startswith('"') and quote.endswith('"'):
+                quote = quote[1:-1]
 
-        if quote:
-            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author_name=author)
+        if quote or ctx.message.attachments or (ctx.message.embeds and ctx.message.embeds[0].get('type') == 'image'):
+            self._update_member(ctx.message.author)
+            ret = self._add_quote(ctx, quote=quote, added_by=ctx.message.author, author=author)
             await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
         else:
-            await self.bot.say(warning("Quote text is empty!"))
+            await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
     @quote.command(pass_context=True, name='add-msg')
-    async def quote_addmsg(self, ctx, message_id: int, channel: discord.Channel = None):
+    async def quote_add_msg(self, ctx, message_id: int, channel: discord.Channel = None):
         """
         Adds a message to the server quote database
 
@@ -711,11 +823,13 @@ class ServerQuotes:
                                        % (channel.mention if channel else 'this channel')))
             return
 
-        if msg.content:
-            ret = self._add_quote(message=msg, added_by=ctx.message.author)
+        if msg.content or msg.attachments or (msg.embeds and msg.embeds[0].get('type') == 'image'):
+            self._update_member(ctx.message.author)
+            self._update_member(msg.author)
+            ret = self._add_quote(ctx, message=msg, added_by=ctx.message.author)
             await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
         else:
-            await self.bot.say(warning("Quote text is empty!"))
+            await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
     @quote.command(pass_context=True, name='remove', aliases=['rm'])
     async def quote_remove(self, ctx, num: int):
@@ -759,10 +873,10 @@ class ServerQuotes:
     # Utility
 
     def format_quote_embed(self, record, extra=None, use_snippet=False) -> discord.Embed:
-        timestamp = record['date_said'] if 'date_said' in record else record['date_added']
-        description = record['snippet'] if use_snippet else record['quote']
+        timestamp = record['date_said'] or record['date_added'] or discord.Embed.Empty
+        description = (record['snippet'] if use_snippet else record['quote']) or discord.Embed.Empty
 
-        embed = discord.Embed(description=description, timestamp=timestamp or discord.Embed.Empty)
+        embed = discord.Embed(description=description, timestamp=timestamp)
 
         footer = ((extra + ' | quote') if extra else 'Quote') + ' #%i' % record['server_quote_id']
 
@@ -773,6 +887,13 @@ class ServerQuotes:
 
         embed.set_author(name='%s' % record['display_author'],
                          icon_url=record['author_avatar_url'] or discord.Embed.Empty)
+
+        if record['image_url']:
+            embed.set_image(url=record['image_url'])
+
+        if record['attachment_url']:
+            embed.add_field(name='Attachment', inline=False,
+                            value='[{}]({})'.format(record['attachment_filename'], record['attachment_url']))
 
         return embed
 
@@ -939,7 +1060,7 @@ class ServerQuotes:
     async def on_member_update(self, before, after):
         if (before.nick != after.nick or before.name != after.name or
                 before.discriminator != after.discriminator or before.avatar != after.avatar):
-            self._update_existing_member(after)
+            self._update_member(after, update_only=True)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
@@ -966,8 +1087,9 @@ def check_file():
                 rows.append((sid, entry['added_by'], entry['author_id'],
                              entry['author_name'], entry['text']))
         with db:
-            db.executemany("INSERT INTO quotes(server_id, added_by, author_id, author_name, quote, migrated) "
-                           "VALUES (?, ?, ?, ?, ?, 1)", rows)
+            db.executemany("INSERT INTO quotes"
+                           "(server_id, added_by, author_id, author_name, quote, date_said, date_added, migrated) "
+                           "VALUES (?, ?, ?, ?, ?, NULL, NULL, 1)", rows)
 
         os.rename(JSON, JSON.replace('.', '_migrated.'))
 
