@@ -101,10 +101,6 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url TEXT,
     UNIQUE (username, discriminator)
 );
-"""
-
-FTS_SQL = """
-CREATE VIRTUAL TABLE IF NOT EXISTS quotes_fts USING FTS4(tokenize=porter);
 
 CREATE VIEW IF NOT EXISTS quotes_view AS
   SELECT quotes.*,
@@ -121,6 +117,10 @@ CREATE VIEW IF NOT EXISTS quotes_view AS
                         AND qn.user_id = quotes.author_id
   LEFT JOIN nicknames an ON an.server_id = quotes.server_id
                         AND an.user_id = quotes.added_by;
+"""
+
+FTS_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS quotes_fts USING FTS4(tokenize=porter);
 
 CREATE TRIGGER IF NOT EXISTS quotes_fts_INSERT AFTER INSERT ON quotes
   BEGIN
@@ -149,7 +149,6 @@ LEFT NATURAL JOIN nicknames
 WHERE user_id IS NOT NULL;
 """
 
-NOFTS_SQL = "CREATE TEMPORARY TABLE IF NOT EXISTS quotes_fts (content TEXT);"
 RANK_SQL = "bm25(MATCHINFO(quotes_fts, 'pcnalx'), 1)"
 
 # Analytics core
@@ -184,7 +183,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.0.1'
+__version__ = '2.0.2'
 
 
 class SortField(Enum):
@@ -299,7 +298,6 @@ class ServerQuotes:
                 con.create_function('bm25', -1, bm25)
             else:
                 self.has_fts = False
-                con.executescript(NOFTS_SQL)
 
         self.bot.loop.create_task(self._populate_userinfo())
 
@@ -503,6 +501,9 @@ class ServerQuotes:
         kwargs = self._normalize_kwargs(kwargs)
         where, params = self._build_where(kwargs, params=[term], wheres=["content MATCH ?"])
 
+        if not self.has_fts:
+            return []
+
         sql = dedent("""
             SELECT SNIPPET(quotes_fts, '**', '**', '…') AS snippet, quotes_view.*
             FROM quotes_fts
@@ -577,7 +578,11 @@ class ServerQuotes:
         query = query.lstrip()
         records = self._do_search(query, limit=50, server=ctx.message.server)
 
-        if not records:
+        if not self.has_fts:
+            await self.bot.say(warning("Missing FTS extension; please contact the bot owner. If you are the owner, see "
+                                       "here: <https://sqlite.org/fts3.html#compiling_and_enabling_fts3_and_fts4>"))
+            return
+        elif not records:
             await self.bot.say("Sorry, no matches.")
             return
 
@@ -685,7 +690,7 @@ class ServerQuotes:
             quote = quote[1:-1]
 
         if quote:
-            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author=author)
+            ret = self._add_quote(quote=quote, added_by=ctx.message.author, author_name=author)
             await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
         else:
             await self.bot.say(warning("Quote text is empty!"))
