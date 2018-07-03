@@ -45,7 +45,7 @@ numbs = {
 INIT_SQL = """
 CREATE TABLE IF NOT EXISTS quotes (
     quote_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    server_id INTEGER,
+    server_id INTEGER NOT NULL,
     server_quote_id INTEGER,
     date_said TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -68,18 +68,17 @@ CREATE INDEX IF NOT EXISTS quotes_date_added ON quotes(date_added);
 CREATE INDEX IF NOT EXISTS quotes_date_said ON quotes(date_said);
 CREATE INDEX IF NOT EXISTS quotes_added_by ON quotes(added_by);
 CREATE INDEX IF NOT EXISTS quotes_author_id ON quotes(author_id);
-CREATE INDEX IF NOT EXISTS quotes_channel_id ON quotes(channel_id);
-CREATE INDEX IF NOT EXISTS quotes_message_id ON quotes(message_id);
 
 CREATE TABLE IF NOT EXISTS server_counters (
-    server_id INTEGER PRIMARY KEY,
-    last_qid INTEGER DEFAULT 0
+    server_id INTEGER NOT NULL,
+    last_qid INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (server_id)
 );
 
 CREATE TRIGGER IF NOT EXISTS quotes_set_sqid AFTER INSERT ON quotes
   WHEN NEW.server_quote_id IS NULL
   BEGIN
-    REPLACE INTO server_counters
+    REPLACE INTO server_counters (server_id, last_qid)
         VALUES (NEW.server_id,
                 COALESCE((SELECT last_qid FROM server_counters sc WHERE sc.server_id IS NEW.server_id), 0) + 1);
 
@@ -91,7 +90,7 @@ CREATE TRIGGER IF NOT EXISTS quotes_set_sqid AFTER INSERT ON quotes
 CREATE TRIGGER IF NOT EXISTS quotes_set_sqid_noinc AFTER INSERT ON quotes
   WHEN NEW.server_quote_id IS NOT NULL
   BEGIN
-    REPLACE INTO server_counters
+    REPLACE INTO server_counters (server_id, last_qid)
         VALUES (NEW.server_id,
                 MAX(COALESCE((SELECT last_qid FROM server_counters sc WHERE sc.server_id IS NEW.server_id), 0),
                     COALESCE((SELECT MAX(server_quote_id) FROM quotes q WHERE q.server_id IS NEW.server_id), 0)));
@@ -155,6 +154,22 @@ CREATE TRIGGER IF NOT EXISTS quotes_UPDATE AFTER UPDATE ON quotes
   END;
 """
 
+SQL_211 = """
+CREATE TABLE server_counters_new (
+    server_id INTEGER NOT NULL DEFAULT 0,
+    last_qid INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (server_id)
+);
+
+INSERT INTO server_counters_new (server_id, last_qid)
+    SELECT COALESCE(server_id, 0), MAX(last_qid)
+    FROM server_counters
+    GROUP BY server_id;
+
+DROP TABLE server_counters;
+ALTER TABLE server_counters_new RENAME TO server_counters;
+"""
+
 NAMES_SQL = """
 SELECT DISTINCT server_id, user_id, nickname, username, discriminator, avatar_url FROM (
     SELECT server_id, author_id AS user_id FROM quotes
@@ -170,7 +185,6 @@ RANK_SQL = "bm25(MATCHINFO(quotes_fts, 'pcnalx'), 1)"
 
 # Analytics core
 import zlib, base64
-
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -200,7 +214,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.1.0'
+__version__ = '2.1.1'
 
 
 class SortField(Enum):
@@ -298,7 +312,7 @@ def bm25(raw_match_info, *args):
 
 class ServerQuotes:
     """
-    Store and retreive memorable quotes from your server
+    Store and retrieve memorable quotes from your server
     """
 
     def __init__(self, bot):
@@ -318,6 +332,7 @@ class ServerQuotes:
 
         self.bot.loop.create_task(self._populate_userinfo())
         self.bot.loop.create_task(self._upgrade_210())
+        self._upgrade_211()
 
         try:
             self.analytics = CogAnalytics(self)
@@ -418,6 +433,8 @@ class ServerQuotes:
             }.items():
                 if cname not in cols:
                     con.execute("ALTER TABLE quotes ADD COLUMN {} {};".format(cname, ctype))
+                if ctype == 'INTEGER':
+                    con.execute("CREATE INDEX IF NOT EXISTS quotes_{0}_idx ON quotes({0});".format(cname))
 
         url_regex = re.compile(r"(?is)\b(?:https?://)(?:[a-z0-9]\.?)+/[^\s]+")
 
@@ -440,6 +457,13 @@ class ServerQuotes:
 
                     params = [row['quote'].replace(url, ''), url, row['quote_id']]
                     con.execute("UPDATE quotes SET quote = ?, image_url = ? WHERE quote_id = ?", params)
+
+    def _upgrade_211(self):
+        with self.db as con:
+            cols = {c['name']: c for c in con.execute("PRAGMA table_info(server_counters);")}
+
+            if cols['server_id']['pk']:
+                con.executescript(SQL_211)
 
     def _update_member(self, member: discord.Member, update_only=False):
         mid = int(member.id)
@@ -802,7 +826,8 @@ class ServerQuotes:
 
         if quote or ctx.message.attachments or (ctx.message.embeds and ctx.message.embeds[0].get('type') == 'image'):
             self._update_member(ctx.message.author)
-            ret = self._add_quote(ctx, quote=quote, added_by=ctx.message.author, author=author)
+            server = ctx.message.server
+            ret = self._add_quote(ctx, quote=quote, added_by=ctx.message.author, author_name=author, server=server)
             await self.bot.say(okay("Quote #%i added." % ret['server_quote_id']))
         else:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
@@ -1080,12 +1105,11 @@ def check_file():
         db = sqlite3.connect(SQLDB)
         rows = []
 
-        db.executescript(INIT_SQL + FTS_SQL)
+        db.executescript(INIT_SQL)
 
         for sid, sdata in data.items():
             for entry in sdata:
-                rows.append((sid, entry['added_by'], entry['author_id'],
-                             entry['author_name'], entry['text']))
+                rows.append((sid, entry['added_by'], entry['author_id'], entry['author_name'], entry['text']))
         with db:
             db.executemany("INSERT INTO quotes"
                            "(server_id, added_by, author_id, author_name, quote, date_said, date_added, migrated) "
