@@ -13,7 +13,7 @@ from .utils import checks
 from .utils.chat_formatting import pagify, box, warning, error, info, bold
 from .utils.dataIO import dataIO
 
-__version__ = '2.0.1'
+__version__ = '2.0.2'
 
 try:
     import tabulate
@@ -862,27 +862,27 @@ class Punish:
     # Legacy command stubs
 
     @commands.command(pass_context=True, no_pm=True)
-    async def lspunish(self, ctx):
+    async def legacy_lspunish(self, ctx):
         await self.bot.say("This command is deprecated; use `%spunish list` instead.\n\n"
                            "This notice will be removed in a future release." % ctx.prefix)
 
     @commands.command(pass_context=True, no_pm=True)
-    async def cpunish(self, ctx):
+    async def legacy_cpunish(self, ctx):
         await self.bot.say("This command is deprecated; use `%squote remove <num>` instead.\n\n"
                            "This notice will be removed in a future release." % ctx.prefix)
 
     @commands.command(pass_context=True, no_pm=True, name='punish-clean')
-    async def punish_clean(self, ctx):
+    async def legacy_punish_clean(self, ctx):
         await self.bot.say("This command is deprecated; use `%spunish clean` instead.\n\n"
                            "This notice will be removed in a future release." % ctx.prefix)
 
     @commands.command(pass_context=True, no_pm=True)
-    async def pwarn(self, ctx):
+    async def legacy_pwarn(self, ctx):
         await self.bot.say("This command is deprecated; use `%spunish warn` instead.\n\n"
                            "This notice will be removed in a future release." % ctx.prefix)
 
     @commands.command(pass_context=True, no_pm=True)
-    async def fixpunish(self, ctx):
+    async def legacy_fixpunish(self, ctx):
         await self.bot.say("This command is deprecated; use `%spunishset setup` instead.\n\n"
                            "This notice will be removed in a future release." % ctx.prefix)
 
