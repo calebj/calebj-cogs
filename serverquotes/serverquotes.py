@@ -1,8 +1,11 @@
 import aiohttp
+import csv
+from datetime import datetime
 import discord
 from discord.ext import commands
 from discord.ext.commands.view import StringView
 from enum import Enum
+from io import BytesIO, StringIO
 import math
 import os
 from random import randrange
@@ -12,14 +15,10 @@ import struct
 from textwrap import dedent
 from typing import Iterable, Optional, Sequence
 
-from .utils.chat_formatting import escape_mass_mentions, pagify, warning, error
+from .utils.chat_formatting import warning
 from .utils.checks import check_permissions
 from .utils.dataIO import dataIO
 
-try:
-    from tabulate import tabulate
-except Exception as e:
-    raise RuntimeError("You must run `pip3 install tabulate`.") from e
 
 PATH = 'data/serverquotes/'
 JSON = PATH + 'quotes.json'
@@ -214,7 +213,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.1.1'
+__version__ = '2.2.0'
 
 
 class SortField(Enum):
@@ -877,6 +876,36 @@ class ServerQuotes:
 
         self._delete_quotes(quote_id=match[0]['quote_id'])
         await self.bot.say(okay("Quote #%i deleted.") % num)
+
+    @quote.command(pass_context=True, name='dump', aliases=['csv'])
+    async def quote_dump(self, ctx):
+        """
+        Uploads all quotes in the server as a CSV
+        """
+        strbuf = StringIO(newline='')
+        fname = 'quotes_%i_%s.csv' % (datetime.now().timestamp(), ctx.message.server.name)
+
+        rows = []
+
+        with self.db as con:
+            cols = [r['name'] for r in con.execute("PRAGMA table_info(quotes);").fetchall()]
+            cols.remove('quote_id')
+            cols += ['display_author', 'display_added_by']
+            writer = csv.DictWriter(strbuf, fieldnames=cols, extrasaction='ignore', quoting=csv.QUOTE_MINIMAL)
+            writer.writeheader()
+            rows = [dict(row) for row in self._get_quotes(server=ctx.message.server)]
+
+            for row in rows:
+                for k in ['date_said', 'date_added']:
+                    if row[k]:
+                        row[k] = row[k].timestamp()
+
+            writer.writerows(rows)
+
+        buf = BytesIO(b'\xef\xbb\xbf' + strbuf.getvalue().encode())
+        print(buf.getvalue())
+        buf.seek(0)
+        await self.bot.upload(buf, filename=fname)
 
     # Legacy command stubs
 

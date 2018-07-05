@@ -295,6 +295,7 @@ An example application of twostage is to have a self-assigned role (using selfro
 Anyone can run these commands:
 * `[p]quote by <member> [show_all]` : displays one or all quotes by a member
 * `[p]quote by-nm <author> [show_all]` : displays one or all quotes by a non-member author
+* `[p]quote dump` : uploads a CSV with all of the server's quote data
 * `[p]quote list [random]` : displays all quotes, optionally jumping to a random one
 * `[p]quote me [show_all]` : displays one or all quotes by the calling member
 * `[p]quote search <query>` : searches quotes by text and displays them in order of relevance
