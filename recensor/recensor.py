@@ -58,7 +58,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.2.0'
+__version__ = '2.2.1'
 
 log = logging.getLogger('red.recensor')
 
@@ -990,7 +990,7 @@ class ReCensor:
         Posts links to online reference material
         """
         await self.bot.say(
-            "ReCensor manual: <https://github.com/calebj/calebj-cogs/#how-do-i-use-recensor>\n"
+            "ReCensor manual: <https://github.com/calebj/calebj-cogs/#recensor>\n"
             "A how-to for Python's regex: <https://docs.python.org/3/howto/regex.html>\n"
             "Full docs on regex syntax: <https://docs.python.org/3/library/re.html#regular-expression-syntax>"
         )

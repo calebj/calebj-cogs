@@ -7,16 +7,17 @@ This repo contains cogs I've written, as well as those I've modified and republi
 ## Table of Contents
 * [Installation](#installation)
 * [Support and Contact](#support-and-contact)
-* [Cog Descriptions](#cog-descriptions)
-* [Frequently Asked Questions](#frequently-asked-questions)
-  * [What does activitylog do?](#what-does-activitylog-do)
-  * [How do I use embedwiz?](#how-do-i-use-embedwiz)
-  * [How do I use punish?](#how-do-i-use-punish)
-  * [How do I use recensor?](#how-do-i-use-recensor)
-  * [How do I use scheduler?](#how-do-i-use-scheduler)
-  * [How do I use serverquotes?](#how-do-i-use-serverquotes)
-  * [How do I use watchdog?](#how-do-i-use-watchdog)
-  * [How do I use xorole?](#how-do-i-use-xorole)
+* [Cog Summaries](#cog-summaries)
+* [Cog Documentation](#cog-documentation)
+  * [ActivityLog](#activitylog)
+  * [Captcha](#captcha)
+  * [EmbedWiz](#embedwiz)
+  * [Punish](#punish)
+  * [ReCensor](#recensor)
+  * [Scheduler](#scheduler)
+  * [ServerQuotes](#serverquotes)
+  * [Watchdog](#watchdog)
+  * [XORole](#xorole)
 * [Contributing](#contributing)
 * [Analytics and Privacy Policy](#analytics-and-privacy-policy)
 * [License and Copyright](#license-and-copyright)
@@ -41,30 +42,30 @@ If you want to contact me directly, I am **@calebj#0001** on Discord, and my ema
 
 If my cogs have made your life easier, consider supporting me through [PayPal](https://paypal.me/calebrj) or [becoming a patron](https://www.patreon.com/calebj). I also take cog commissions, which can either be public (added to this repo) or private (only for you).
 
-## Cog Descriptions
-* activitylog: Log messages, attachments, and server changes to disk. See [below](#what-does-activitylog-do).
+## Cog Summaries
+* [activitylog](#activitylog): Log messages, attachments, and server changes to disk.
 * customgcom: Bot-wide custom commands. Only the bot owner can add/remove them.
 * datadog: Publish various metrics and events to a local statsd instance.
 * description: Change the header of Red's [p]help command.
 * dice: Wraps the python-dice library. Command is `[p]dice <expression>`.
 * duel: Procedurally generated duel with a flexible lexicon system.
-* embedwiz: A simple tool to generate and post custom embeds.
+* [embedwiz](#embedwiz): A simple tool to generate and post custom embeds.
 * galias: Bot-wide command aliases. Only the bot owner can add/remove them.
 * gallery: Automatically clean up comments in content-focused channels.
-* punish: Timed text+voice mute with anti-evasion, modlog cases, and more.
+* [punish](#punish): Timed text+voice mute with anti-evasion, modlog cases, and more.
 * purgepins: Delete pin notification messages after a per-channel interval.
-* recensor: Filter messages using regular expressions
-* scheduler: Squid's [scheduler cog][squid_scheduler], with enhancements.
-* serverquotes: Store and recall memorable quotes in your server.
+* [recensor](#recensor): Filter messages using regular expressions
+* [scheduler](#scheduler): Squid's [scheduler cog][squid_scheduler], with enhancements.
+* [serverquotes](#serverquotes): Store and recall memorable quotes in your server.
 * sinfo: Simple text dump of server and channel information.
-* watchdog: Helps systemd know when your bot is functioning. See [below](#how-do-i-use-watchdog).
-* xorole: Self-role functionality with single-membership role sets.
+* [watchdog](#watchdog): Helps systemd know when your bot is functioning.
+* [xorole](#xorole): Self-role functionality with single-membership role sets.
 * zalgo: H͕̭͒̈́E̡̩͋͐ C̺̻̉O̟͋M̞̐Ę͒ͅS̬̣̍́.
 
 [squid_scheduler]: https://github.com/tekulvw/Squid-Plugins/blob/master/scheduler/scheduler.py
 
-## Frequently Asked Questions
-### What does activitylog do?
+## Cog Documentation
+### ActivityLog
 This cog saves messages and DMs, attachments, and updates to server settings __to log files in your bot's data folder__. If you want a cog that posts events in a channel, use [Grenzpolizei](http://cogs.red/cogs/PaddoInWonderland/PaddoCogs/grenzpolizei/) by [PaddoInWonderland](https://github.com/PaddoInWonderland).
 
 There is no support for uploading logfiles yet, though it is planned. Logging of embed contents and posting events in a channel are NOT planned features.
@@ -91,8 +92,8 @@ Activitylog can record the following events:
 
 Note: The version of discord.py that Red v2 is based on doesn't have a way to record audit logs, so there's no way to record which member made a particular change.
 
-### How do I use embedwiz?
-Embedwiz is a fairly simply cog.
+### EmbedWiz
+EmbedWiz is a fairly simply cog.
 
 To build an embed, specify the following parameters seperated by a semicolon (`;`):
 * Title: to make a link, put `[Title text](title url)`
@@ -132,7 +133,7 @@ Only mods and those with the manage_messages permission can use these subcommand
 * `embedwiz delete [embed_spec ...]` : deletes the command message (and prompt message, if used).
 * `embedwiz edit [channel] [message_id] [embed_spec ...]` : edits **any** existing embed.
 
-### How do I use punish?
+### Punish
 The punish cog automatically sets itself up in most cases. In case some role configurations need to be re-applied, the role needs to be recreated, etc., run `[p]punishset setup`.
 
 To "punish" a user, simply run `[p]punish <user> [duration] [optional reason ...]`, where `duration` can be `forever` or `infinite` to set no end time. If no duration of provided, the default of 30 minutes is used. If the user is already punished, their timer will be updated to match the provided duration, and the reason will be updated if a new one is given.
@@ -160,7 +161,7 @@ It is possible to designate a special channel which punished users are allowed t
 #### Punished user list formatting
 Support for multi-line headers and cells was added in tabluate version 0.8.0. If the installed version is older than that, the formatting for `[p]punish list` will revert to a single-row layout, which can easily overflow and cause ugly formatting. To prevent this, simply update tabulate (a quick shortcut to do so is `[p]debug bot.pip_install('tabulate')`).
 
-### How do I use recensor?
+### ReCensor
 The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library/re.html) module to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is described [here](https://docs.python.org/3/library/re.html#regular-expression-syntax).
 
 Most of the configuration will be done with the following commands:
@@ -261,7 +262,7 @@ Miscellaneous:
 - 30 consecutive characters/mentions: `(?s)^(?:<(?:[#@&!]+|:\w+:)\d+>|.(?<!<[#@&:!])){30,}`
   - Emotes and user, role, and channel mentions count as one character
 
-### How do I use scheduler?
+### Scheduler
 The scheduler cog supports a number of different functions. All users can schedule a command to run in the future ("one-shot"), but only moderators and members with the "manage messages" permission can add or manage repeating commands. Additionally, only one of the same command can be scheduled at a time for each member. To schedule it again, they must cancel the one they scheduled before.
 
 Time interval can be any combination of numbers and units, e.g. 5m30s, or a long format such as "5 minutes and 30 seconds". Valid units are `s`, `m`, `h`, `d`, `w`. For all subcommands that don't have the time interval as the last argument, intervals containing spaces must be in double quotes.
@@ -291,7 +292,7 @@ Moderators and members with the "manage messages" permission can run these subco
 
 An example application of twostage is to have a self-assigned role (using selfrole from the [Squid Admin cog](http://cogs.red/cogs/tekulvw/Squid-Plugins/admin/)) that is added and then removed after a custom delay, using a single alias.
 
-### How do I use serverquotes?
+### ServerQuotes
 Anyone can run these commands:
 * `[p]quote by <member> [show_all]` : displays one or all quotes by a member
 * `[p]quote by-nm <author> [show_all]` : displays one or all quotes by a non-member author
@@ -311,7 +312,7 @@ Moderators, admins, and people with Manage Messages permissions can use:
 
 The cog uses sqlite's [FTS4 extension](https://sqlite.org/fts3.html) for text indexing with a [Porter stemming tokenizer](https://tartarus.org/martin/PorterStemmer/), and ranks search results by the [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) algorithm.
 
-### How do I use watchdog?
+### Watchdog
 First of all, if you aren't running your bot on a Linux machine with systemd, or another service manager that listens for watchdog messages in the same way, **this cog won't do anything for you**. Sorry.
 
 With that out of the way, some important information: **this cog doesn't actually restart your bot for you**. Systemd has to do that. All the cog does is periodically send systemd messages that everything is working.
@@ -355,8 +356,8 @@ systemctl enable --now red@squid
 
 After which your bot should now be running (check with `systemctl status red@squid`).
 
-### How do I use xorole?
-Xorole was created out of the need for "role sets", which are groups of roles that a member should only have one of at a time. Thus the name, which is short for "exclusive-or roles". Examples use cases include self-assignable color roles, timezone or region roles, and teams (e.g. Ingress or Pokemon Go).
+### XORole
+XORole was created out of the need for "role sets", which are groups of roles that a member should only have one of at a time. Thus the name, which is short for "exclusive-or roles". Examples use cases include self-assignable color roles, timezone or region roles, and teams (e.g. Ingress or Pokemon Go).
 
 The following user commands are available as subcommands of `xorole`:
 * `list`: lists available rolesets and the roles in them.
