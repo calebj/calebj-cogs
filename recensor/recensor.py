@@ -954,7 +954,9 @@ class ReCensor:
         - If no command is provided, invoke [p]recensor show filter_name
         - Otherwise, invoke [p]recensor set setting_name filter_name options...
         """
-        if setting_name:
+        if ctx.invoked_subcommand is not None:
+            return
+        elif setting_name:
             new_view = '%s "%s"' % (setting_name, filter_name)
 
             if options:
@@ -996,6 +998,7 @@ class ReCensor:
         )
 
     @recensor.command(pass_context=True, name='list', aliases=['show'])
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_list(self, ctx, filter_name: str = None):
         """
         Displays all or one filter(s)
@@ -1127,6 +1130,7 @@ class ReCensor:
             await self.bot.say(embed=embed)
 
     @recensor.command(pass_context=True, name='create', aliases=['add'], rest_is_raw=True)
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_create(self, ctx, name: str, *, pattern: str = None):
         """
         Creates a new filter
@@ -1164,6 +1168,7 @@ class ReCensor:
                                 % (' and pattern set' if pattern else '', ctx.prefix, name)))
 
     @recensor.command(pass_context=True, name='delete', aliases=['rm'])
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_delete(self, ctx, name: str):
         """
         Deletes a filter
@@ -1187,6 +1192,7 @@ class ReCensor:
             await self.bot.say(info("Filter deleted."))
 
     @recensor.command(pass_context=True, name='rename')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_rename(self, ctx, name: str, new_name: str):
         """
         Renames a filter
@@ -1214,6 +1220,7 @@ class ReCensor:
         await self.bot.say(info("Successfully renamed '%s' to '%s'." % (name, new_name)))
 
     @recensor.command(pass_context=True, name='copy')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_copy(self, ctx, name: str, new_name: str, linked: bool = False):
         """
         Copies an existing filter, with optional link
@@ -1244,6 +1251,7 @@ class ReCensor:
         await self.bot.say(info("Created a copy of '%s' named '%s' with %s lists." % (name, new_name, list_op)))
 
     @recensor.group(pass_context=True, name='server')
+    @checks.admin_or_permissions(manage_server=True)
     async def recensor_server(self, ctx):
         """
         Show or configure server settings
@@ -1364,6 +1372,7 @@ class ReCensor:
         await self._list_command_main(ctx, settings, 'roles_list', operation, *options)
 
     @recensor.group(pass_context=True, name='set', hidden=True, invoke_without_command=True, rest_is_raw=True)
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set(self, ctx, filter_name: str, setting_name: str = None, *, options):
         """
         Configures filter parameters
@@ -1407,6 +1416,7 @@ class ReCensor:
             return await self.bot.send_cmd_help(ctx)
 
     @recensor_set.command(pass_context=True, name='enabled')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_enabled(self, ctx, filter_name: str, enabled: bool = None):
         """
         Show/set filter enabled/active toggle
@@ -1439,6 +1449,7 @@ class ReCensor:
         await self.bot.say('%s is %s %s.' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='override')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_override(self, ctx, filter_name: str, override: bool = None):
         """
         Show/set filter override/priority toggle
@@ -1471,6 +1482,7 @@ class ReCensor:
         await self.bot.say('Filter override for %s is %s %s.' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='priv-exempt')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_priv_exempt(self, ctx, filter_name: str, priv_exempt: str = None):
         """
         Show/set filter privileged user exemption toggle
@@ -1510,6 +1522,7 @@ class ReCensor:
         await self.bot.say('Privilege user exemption for %s is %s %s.' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='asciify')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_asciify(self, ctx, filter_name: str, asciify: str = None):
         """
         Show/set filter ASCIIfy toggle
@@ -1560,6 +1573,7 @@ class ReCensor:
         await self.bot.say(msg)
 
     @recensor_set.command(pass_context=True, name='multi-msg', aliases=['multi'])
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_multi_msg(self, ctx, filter_name: str, multi_msg: bool = None):
         """
         Show/set filter multi-message search toggle
@@ -1601,6 +1615,7 @@ class ReCensor:
         await self.bot.say(msg)
 
     @recensor_set.command(pass_context=True, name='multi-join')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_multi_msg_join(self, ctx, filter_name: str, join: str = None):
         """
         Show/set multi-message join
@@ -1638,6 +1653,7 @@ class ReCensor:
         await self.bot.say('Multi-message join for %s is %s set to %s.' % (_filter.name, adj, disp))
 
     @recensor_set.command(pass_context=True, name='mode')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_mode(self, ctx, filter_name: str, mode: str = None):
         """
         Show/set filter matching mode
@@ -1675,6 +1691,7 @@ class ReCensor:
                            % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='position')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_position(self, ctx, filter_name: str, position: str = None):
         """
         Configures a filter's matching position
@@ -1720,6 +1737,7 @@ class ReCensor:
         await self.bot.say('%s is %s set to match %s.' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='flags')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_flags(self, ctx, filter_name: str, *, flags: str = None):
         """
         Configures a filter's regex flags
@@ -1767,6 +1785,7 @@ class ReCensor:
         await self.bot.say('Flags for %s are %s%s' % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='pattern', rest_is_raw=True)
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_pattern(self, ctx, filter_name: str, *, pattern):
         """
         Configures a filter's pattern
@@ -1814,6 +1833,7 @@ class ReCensor:
         await self.bot.say('Pattern for %s %s' % (_filter.name, desc))
 
     @recensor_set.command(pass_context=True, name='channels')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_channels(self, ctx, filter_name: str, operation: str = None, *options):
         """
         Configure a filter's channels list
@@ -1833,6 +1853,7 @@ class ReCensor:
         await self._list_command_main(ctx, _filter, 'channels_list', operation, *options)
 
     @recensor_set.command(pass_context=True, name='roles')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_roles(self, ctx, filter_name: str, operation: str = None, *options):
         """
         Configure a filter's roles list
@@ -1852,6 +1873,7 @@ class ReCensor:
         await self._list_command_main(ctx, _filter, 'roles_list', operation, *options)
 
     @recensor.command(pass_context=True, name='test')
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_test(self, ctx, filter_name: str = None):
         """
         Interactively tests a single filter
@@ -1926,6 +1948,7 @@ class ReCensor:
         self._ignore_filters.pop((ctx.message.channel.id, ctx.message.author.id), None)
 
     @recensor.command(pass_context=True, name='regex101', aliases=['101'], rest_is_raw=True)
+    @checks.mod_or_permissions(manage_messages=True)
     async def recensor_regex101(self, ctx, filter_name: str = None, *, test_message: str = None):
         """
         Posts a link to open a filter's pattern on regex101.com

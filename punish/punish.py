@@ -289,13 +289,15 @@ class Punish:
     @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
     async def punish(self, ctx, user: discord.Member, duration: str = None, *, reason: str = None):
-        if ctx.invoked_subcommand is None:
-            if user:
-                await ctx.invoke(self.punish_start, user=user, duration=duration, reason=reason)
-            else:
-                await self.bot.send_cmd_help(ctx)
+        if ctx.invoked_subcommand:
+            return
+        elif user:
+            await ctx.invoke(self.punish_start, user=user, duration=duration, reason=reason)
+        else:
+            await self.bot.send_cmd_help(ctx)
 
     @punish.command(pass_context=True, no_pm=True, name='start')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_start(self, ctx, user: discord.Member, duration: str = None, *, reason: str = None):
         """
         Puts a user into timeout for a specified time, with optional reason.
@@ -307,6 +309,7 @@ class Punish:
         await self._punish_cmd_common(ctx, user, duration, reason)
 
     @punish.command(pass_context=True, no_pm=True, name='cstart')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_cstart(self, ctx, user: discord.Member, duration: str = None, *, reason: str = None):
         """
         Same as [p]punish start, but cleans up the target's last message.
@@ -326,6 +329,7 @@ class Punish:
             await self.bot.say("Punishment set, but I need permissions to manage messages to clean up.")
 
     @punish.command(pass_context=True, no_pm=True, name='list')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_list(self, ctx):
         """
         Shows a table of punished users with time, mod and reason.
@@ -379,6 +383,7 @@ class Punish:
             await self.bot.say(box(page))
 
     @punish.command(pass_context=True, no_pm=True, name='clean')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_clean(self, ctx, clean_pending: bool = False):
         """
         Removes absent members from the punished list.
@@ -408,6 +413,7 @@ class Punish:
         await self.bot.say('Cleaned %i absent members from the list.' % count)
 
     @punish.command(pass_context=True, no_pm=True, name='warn')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_warn(self, ctx, user: discord.Member, *, reason: str = None):
         """
         Warns a user with boilerplate about the rules
@@ -423,6 +429,7 @@ class Punish:
         await self.bot.say(' '.join(msg))
 
     @punish.command(pass_context=True, no_pm=True, name='end', aliases=['remove'])
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_end(self, ctx, user: discord.Member, *, reason: str = None):
         """
         Removes punishment from a user before time has expired
@@ -478,6 +485,7 @@ class Punish:
             await self.bot.say("The punish role couldn't be found in this server.")
 
     @punish.command(pass_context=True, no_pm=True, name='reason')
+    @checks.mod_or_permissions(manage_messages=True)
     async def punish_reason(self, ctx, user: discord.Member, *, reason: str = None):
         """
         Updates the reason for a punishment, including the modlog if a case exists.
@@ -521,7 +529,7 @@ class Punish:
 
         await self.bot.say(msg)
 
-    @commands.group(pass_context=True, no_pm=True)
+    @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     @checks.admin_or_permissions(administrator=True)
     async def punishset(self, ctx):
         if ctx.invoked_subcommand is None:
