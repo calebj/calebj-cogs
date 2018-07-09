@@ -200,6 +200,8 @@ Each filter in a server has the following settings:
   - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
 - `asciify`: attempt to reduce unicode text to its equivalent ASCII before matching
   - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
+- `attachment`: prepends `{attachment:FILENAME}` to applicable messages when enabled.
+  - to prevent spoofing, an extra `{` is prepended when the message starts with `{attachment:`.
 
 The cog also supports configuring the following server-wide settings:
 - A `priv-exempt` toggle, which makes moderators, admins and the server owner immune from *all* filters by default
@@ -261,6 +263,11 @@ Miscellaneous:
   - NOTE: requires the I flag to be removed, as it is enabled by default
 - 30 consecutive characters/mentions: `(?s)^(?:<(?:[#@&!]+|:\w+:)\d+>|.(?<!<[#@&:!])){30,}`
   - Emotes and user, role, and channel mentions count as one character
+
+Attachments (replace `<PATTERN>` with the message content pattern):
+- Messages with pictures attached: `^\{attachment:.*\.(?:png|jpg|jpeg|gif|pdf)\}.*<PATTERN>`
+- Messages with no attachments only `^(?!\{attachment:)<PATTERN>`
+- Messages with ONLY attachments (no text): `^\{attachment:.*\}$`
 
 ### Scheduler
 The scheduler cog supports a number of different functions. All users can schedule a command to run in the future ("one-shot"), but only moderators and members with the "manage messages" permission can add or manage repeating commands. Additionally, only one of the same command can be scheduled at a time for each member. To schedule it again, they must cancel the one they scheduled before.

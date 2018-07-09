@@ -58,7 +58,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.2.2'
+__version__ = '2.3.0'
 
 log = logging.getLogger('red.recensor')
 
@@ -182,6 +182,15 @@ def asciify_string(string: str) -> str:
         return unidecode.unidecode(string)
 
     return string
+
+
+def preprocess_msg(_filter, message):
+    if _filter.attachment_header and message.attachments:
+        return '{attachment:%s}%s' % (message.attachments[0]['filename'], message.content)
+    elif message.content.startswith('{attachment:'):
+        return '{' + message.content
+    else:
+        return message.content
 
 
 # https://stackoverflow.com/a/11564323
@@ -572,7 +581,7 @@ class ServerConfig(FilterBase):
         """
         has_white = False
         match_white = False
-        asciified = None
+        content_cache = {}
 
         if list_cache is None:
             list_cache = {}
@@ -581,13 +590,20 @@ class ServerConfig(FilterBase):
             if not (f.check_meta(message, list_cache) and f.predicate):
                 continue
 
-            if f.asciify or (f.asciify is None and self.asciify):
-                if asciified is None:
-                    asciified = asciify_string(message.content)
+            asciify = f.asciify or (f.asciify is None and self.asciify)
+            ck = (asciify, f.attachment_header)
 
-                match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, asciified)
+            if ck in content_cache:
+                content = content_cache[ck]
             else:
-                match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, message.content)
+                content = preprocess_msg(f, message)
+
+                if asciify:
+                    content = asciify_string(content)
+
+                content_cache[ck] = content
+
+            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
 
             if f.override and match:  # override black or white
                 return not f.mode
@@ -613,24 +629,37 @@ class ServerConfig(FilterBase):
             list_cache = {}
 
         joined_cache = {}
+        content_cache = {}
 
         for f in self.order:
             if not (f.multi_msg and f.check_meta(messages[-1], list_cache) and f.predicate):
                 continue
 
-            is_asciify = f.asciify or (f.asciify is None and self.asciify)
+            asciify = f.asciify or (f.asciify is None and self.asciify)
 
-            ck = ('a_' if is_asciify else 'n_') + f.multi_msg_join
+            jk = (asciify, f.multi_msg_join, f.attachment_header)
 
-            if ck in joined_cache:
-                content, indices = joined_cache[ck]
+            if jk in joined_cache:
+                content, indices = joined_cache[jk]
             else:
-                if is_asciify:
-                    strings = [asciify_string(m.content) for m in messages]
-                else:
-                    strings = [m.content for m in messages]
+                strings = []
 
-                joined_cache[ck] = (content, indices) = concat_with_keys(strings, f.multi_msg_join)
+                for message in messages:
+                    ck = (asciify, f.attachment_header, message.id)
+
+                    if ck in content_cache:
+                        content = content_cache[ck]
+                    else:
+                        content = preprocess_msg(f, message)
+
+                        if asciify:
+                            content = asciify_string(content)
+
+                        content_cache[ck] = content
+
+                    strings.append(content)
+
+                joined_cache[jk] = (content, indices) = concat_with_keys(strings, f.multi_msg_join)
 
             match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
 
@@ -652,7 +681,7 @@ class ServerConfig(FilterBase):
 
 class Filter(FilterBase):
     __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'asciify', 'position',
-                 'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', '_predicate', 'links']
+                 'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', '_predicate', 'links', 'attachment_header']
 
     def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
         self.parent = parent
@@ -667,6 +696,7 @@ class Filter(FilterBase):
         self.multi_msg = data.get('multi_msg', False)
         self.multi_msg_join = data.get('multi_msg_join', CONCAT_JOIN)
         self.asciify = data.get('asciify', None)
+        self.attachment_header = data.get('attachment_header', False)
 
         self.position = POSITION(data.get('position', POSITION.ANYWHERE))
         self._predicate = self.rebuild_predicate()
@@ -772,16 +802,17 @@ class Filter(FilterBase):
 
     def to_json(self):
         data = {
-            'asciify'        : self.asciify,
-            'enabled'        : self.enabled,
-            'flags'          : self.flags,
-            'mode'           : self.mode,
-            'multi_msg'      : self.multi_msg,
-            'multi_msg_join' : self.multi_msg_join,
-            'override'       : self.override,
-            'pattern'        : self.pattern,
-            'position'       : self.position.value,
-            'priv_exempt'    : self.priv_exempt
+            'asciify'           : self.asciify,
+            'attachment_header' : self.attachment_header,
+            'enabled'           : self.enabled,
+            'flags'             : self.flags,
+            'mode'              : self.mode,
+            'multi_msg'         : self.multi_msg,
+            'multi_msg_join'    : self.multi_msg_join,
+            'override'          : self.override,
+            'pattern'           : self.pattern,
+            'position'          : self.position.value,
+            'priv_exempt'       : self.priv_exempt
         }
 
         for k in ['roles_list', 'channels_list']:
@@ -800,7 +831,8 @@ class Filter(FilterBase):
             enabled=False,
             override=self.override,
             priv_exempt=self.priv_exempt,
-            position=self.position
+            position=self.position,
+            attachment_header=self.attachment_header
         )
 
         new_kwargs.update(kwargs)
@@ -849,6 +881,7 @@ class ReCensor:
     #       'filters' : {
     #           name (str) : {
     #               'asciify'        : tristate (default null),
+    #               'attachment_header' : bool (default false),
     #               'enabled'        : bool (default false),
     #               'flags'          : flags (str containing subset of AILUMSX, default DEFAULT_FLAGS),
     #               'mode'           : bool (default false),
@@ -1050,8 +1083,7 @@ class ReCensor:
             return '\n'.join(lines)
 
         def format_params(obj):
-            order = ['Mode', 'ASCIIfy', 'Privilege exempt', 'Override', 'Position', 'Multi-message',
-                     'Multi-message join']
+            order = ['Mode', 'ASCIIfy', 'Privilege exempt', 'Override', 'Position', 'Multi-message']
             params = {
                 'Priv. exempt' : ('yes' if obj.priv_exempt else 'no'),
                 'ASCIIfy'      : ('yes' if obj.asciify else 'no'),
@@ -1069,9 +1101,9 @@ class ReCensor:
 
                 if obj.multi_msg:
                     if obj.multi_msg_join:
-                        params['Multi-message join'] = '`"%s"`' % obj.multi_msg_join.encode('unicode_escape').decode()
+                        params['Multi-message'] += ', joined with `"%s"`' % obj.multi_msg_join.encode('unicode_escape').decode()
                     else:
-                        params['Multi-message join'] = '`""` (empty string)'
+                        params['Multi-message'] += ', joined with `""` (empty string)'
 
                 if obj.priv_exempt is None:
                     params['Privilege exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
@@ -1496,7 +1528,7 @@ class ReCensor:
 
         inherit = object()
 
-        if type(priv_exempt) is str and priv_exempt.lower().strip("'`\" "):
+        if type(priv_exempt) is str and priv_exempt.lower().strip("'`\" ") == 'inherit':
             priv_exempt = inherit
         elif type(priv_exempt) not in (bool, type(None)):
             priv_exempt = await ctx.command.do_conversion(ctx, bool, priv_exempt)
@@ -1540,7 +1572,7 @@ class ReCensor:
 
         inherit = object()
 
-        if type(asciify) is str and asciify.lower().strip("'`\" "):
+        if type(asciify) is str and asciify.lower().strip("'`\" ") == 'inherit':
             asciify = inherit
         elif type(asciify) not in (bool, type(None)):
             asciify = await ctx.command.do_conversion(ctx, bool, asciify)
@@ -1687,7 +1719,7 @@ class ReCensor:
             self.save()
 
         desc = 'DO' if mode else 'do NOT'
-        await self.bot.say('%s is %s set to only allow messages that %s match the pattern.'
+        await self.bot.say('%s is %s set to only allow messages that %s match its pattern.'
                            % (_filter.name, adj, desc))
 
     @recensor_set.command(pass_context=True, name='position')
@@ -1832,6 +1864,44 @@ class ReCensor:
 
         await self.bot.say('Pattern for %s %s' % (_filter.name, desc))
 
+    @recensor_set.command(pass_context=True, name='attachment')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_attachment(self, ctx, filter_name: str, attachment_header: bool = None):
+        """
+        Show/set filter attachment header
+
+        When enabled, each message will be prepended with {attachment:ATTACHMENT_FILENAME}
+        This allows advanced filtering based on whether an attachment is present, as well as
+        based on the file's full name and/or extension.
+
+        attachment_header must be a boolean option or left blank to show the current setting
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(attachment_header) not in (bool, type(None)):
+            attachment_header = await ctx.command.do_conversion(ctx, bool, attachment_header)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif attachment_header is None:
+            attachment_header = _filter.attachment_header
+            adj = 'currently'
+        elif _filter.attachment_header == attachment_header:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.attachment_header = attachment_header
+            self.save()
+
+        desc = 'enabled' if attachment_header else 'disabled'
+        msg = 'Attachment filename headers for %s are %s %s.' % (_filter.name, adj, desc)
+
+        await self.bot.say(msg)
+
     @recensor_set.command(pass_context=True, name='channels')
     @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_channels(self, ctx, filter_name: str, operation: str = None, *options):
@@ -1914,7 +1984,12 @@ class ReCensor:
                 await self.bot.say('Testing stopped.')
                 break
 
-            match = await self.bot.loop.run_in_executor(self.executor, _filter.predicate, msg.content)
+            content = preprocess_msg(_filter, msg)
+
+            if _filter.asciify or (_filter.asciify is None and settings.asciify):
+                content = asciify_string(content)
+
+            match = await self.bot.loop.run_in_executor(self.executor, _filter.predicate, content)
             wl_msg = 'Your message will not be deleted because it matched and the filter is in whitelist mode.'
             bl_msg = 'Your message will be deleted because it matched and the filter is in blacklist mode.'
 
