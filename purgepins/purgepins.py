@@ -5,7 +5,7 @@ from .utils.dataIO import dataIO
 from .utils import checks
 import re
 
-__version__ = '1.2.0'
+__version__ = '1.2.1'
 
 JSON = 'data/purgepins.json'
 MAX_PINS = 50
@@ -84,7 +84,10 @@ def _timespec_sec(expr):
     else:
         names, length = _find_unit('seconds')
 
-    return float(atoms[0]) * length
+    try:
+        return float(atoms[0]) * length
+    except ValueError:
+        raise BadTimeExpr("invalid value: '%s'" % atoms[0])
 
 
 def _generate_timespec(sec, short=False, micro=False):
@@ -151,12 +154,16 @@ class PurgePins:
     @commands.command(pass_context=True, no_pm=True)
     @checks.admin_or_permissions(manage_messages=True)
     async def purgepins(self, ctx, wait: str = None):
-        """Set delay for deletion of pin messages, or disable it.
+        """
+        Set delay for deletion of pin messages, or disable it.
 
         Accepted time units are s(econds), m(inutes), h(ours).
         Example: !purgepins 1h30m
-        To disable purepins, run !purgepins off"""
+        To disable purepins, run !purgepins off
+        """
         channel = ctx.message.channel
+        current = self.settings.get(channel.id, {}).get('PURGE_DELAY', False)
+
         if wait is not None:
             if wait.strip().lower() in ['none', 'off']:
                 wait = False
@@ -167,34 +174,40 @@ class PurgePins:
                     await self.bot.say("Error parsing duration: %s." % e.args)
                     return
 
-            if channel.id not in self.settings:
-                self.settings[channel.id] = {}
-            self.settings[channel.id]['PURGE_DELAY'] = wait
+            if wait == current:
+                adj = 'already'
+            else:
+                if channel.id not in self.settings:
+                    self.settings[channel.id] = {}
 
-            dataIO.save_json(JSON, self.settings)
+                adj = 'now'
+                self.settings[channel.id]['PURGE_DELAY'] = wait
+                dataIO.save_json(JSON, self.settings)
         else:
-            wait = self.settings.get(channel.id, {}).get('PURGE_DELAY', False)
+            adj = 'currently'
+            wait = current
 
         if wait is False:
-            msg = ('Pin notifications in this channel will not be '
-                   'automatically deleted.')
+            msg = 'Pin notifications cleanup in this channel is %s disabled.' % adj
         else:
-            msg = 'Pin notifications in this channel are set to be deleted '
+            msg = 'Pin notifications in this channel are %s set to be deleted ' % adj
+
             if wait > 0:
                 msg += 'after %s.' % _generate_timespec(wait)
             else:
                 msg += 'immediately.'
 
         if not channel.permissions_for(channel.server.me).manage_messages:
-            msg += ("\n**Warning:** I don't have permissions to delete "
-                    "messages in this channel!")
+            msg += ("\n\n**Warning:** I don't have permissions to delete messages in this channel!")
 
         await self.bot.say(msg)
 
     @commands.command(pass_context=True, no_pm=True)
     @checks.admin_or_permissions(manage_messages=True)
     async def rotatepins(self, ctx, on_off: bool = None):
-        "Sets whether the oldest pin is automatically removed at 50."
+        """
+        Sets whether the oldest pin is automatically removed at 50.
+        """
         channel = ctx.message.channel
         msg = 'Pin auto-rotation %s in this channel.'
 

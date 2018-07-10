@@ -14,7 +14,7 @@ from random import randint
 from math import ceil
 from collections import defaultdict
 
-__version__ = '2.0.1'
+__version__ = '2.0.2'
 
 log = logging.getLogger("red.scheduler")
 log.setLevel(logging.INFO)
@@ -94,7 +94,10 @@ def _timespec_sec(expr):
     else:
         names, length = _find_unit('seconds')
 
-    return float(atoms[0]) * length
+    try:
+        return float(atoms[0]) * length
+    except ValueError:
+        raise BadTimeExpr("invalid value: '%s'" % atoms[0])
 
 
 def _generate_timespec(sec, short=False, micro=False):

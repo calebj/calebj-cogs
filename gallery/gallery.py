@@ -9,7 +9,7 @@ from discord.ext import commands
 from cogs.utils.dataIO import dataIO
 from cogs.utils.chat_formatting import error
 
-__version__ = '1.3.0'
+__version__ = '1.3.1'
 
 logger = logging.getLogger("red.gallery")
 
@@ -108,7 +108,10 @@ def _timespec_sec(expr):
     else:
         names, length = _find_unit('seconds')
 
-    return float(atoms[0]) * length
+    try:
+        return float(atoms[0]) * length
+    except ValueError:
+        raise BadTimeExpr("invalid value: '%s'" % atoms[0])
 
 
 def _generate_timespec(sec, short=False, micro=False):
