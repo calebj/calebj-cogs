@@ -58,7 +58,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.2.1'
+__version__ = '2.2.2'
 
 log = logging.getLogger('red.recensor')
 
@@ -1259,10 +1259,10 @@ class ReCensor:
         If no subcommand is provided, invokes [p]recensor show server
         """
         if ctx.invoked_subcommand is None:
-            await self.bot.send_cmd_help(ctx)
+            return await self.bot.send_cmd_help(ctx)
         elif ctx.invoked_subcommand is self.recensor_server:
             ctx.view = StringView('SERVER')
-            await self.recensor_list.invoke(ctx)
+            return await self.recensor_list.invoke(ctx)
 
     @recensor_server.command(pass_context=True, name='priv-exempt')
     async def recensor_server_priv_exempt(self, ctx, priv_exempt: bool = None):
@@ -1658,7 +1658,7 @@ class ReCensor:
         """
         Show/set filter matching mode
 
-        mode must be blacklist, whitelist, or left blank to show the current setting
+        mode MUST be blacklist, whitelist, or left blank to show the current setting
         """
         server = ctx.message.server
         settings = self.settings.get(server.id)
@@ -1670,7 +1670,7 @@ class ReCensor:
         elif mode.lower().startswith('white'):
             mode = True
         else:
-            await self.bot.send_cmd_help(ctx)
+            return await self.bot.send_cmd_help(ctx)
 
         if not _filter:
             await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
@@ -1696,7 +1696,7 @@ class ReCensor:
         """
         Configures a filter's matching position
 
-        Position must be one of the following (or left blank to show the current value):
+        Position MUST be one of the following (or left blank to show the current value):
         - start:    only looks at the beginning of the message
         - anywhere: scans through the full message looking for a match
         - full:     the entire message must match, from start to finish
@@ -1713,7 +1713,7 @@ class ReCensor:
         try:
             position = position and POSITION(position)
         except ValueError:
-            await self.bot.send_cmd_help(ctx)
+            return await self.bot.send_cmd_help(ctx)
 
         if position is None:
             position = _filter.position
