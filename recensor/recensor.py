@@ -58,7 +58,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.3.0'
+__version__ = '2.3.1'
 
 log = logging.getLogger('red.recensor')
 
@@ -1083,7 +1083,9 @@ class ReCensor:
             return '\n'.join(lines)
 
         def format_params(obj):
-            order = ['Mode', 'ASCIIfy', 'Privilege exempt', 'Override', 'Position', 'Multi-message']
+            order = ['Mode', 'ASCIIfy', 'Privilege exempt', 'Override', 'Position',
+                     'Attachment Header', 'Multi-message', 'Multi-message join']
+
             params = {
                 'Priv. exempt' : ('yes' if obj.priv_exempt else 'no'),
                 'ASCIIfy'      : ('yes' if obj.asciify else 'no'),
@@ -1091,12 +1093,13 @@ class ReCensor:
 
             if type(obj) is Filter:
                 params.update({
-                    'Enabled'       : ('yes' if obj.enabled else 'no'),
-                    'Mode'          : ('white' if obj.mode else 'black'),
-                    'Override'      : ('yes' if obj.override else 'no'),
-                    'Multi-message' : ('yes' if obj.multi_msg else 'no'),
-                    'Flags'         : obj.flags or '(none)',
-                    'Position'      : obj.position.value
+                    'Enabled'           : ('yes' if obj.enabled else 'no'),
+                    'Mode'              : ('white' if obj.mode else 'black'),
+                    'Override'          : ('yes' if obj.override else 'no'),
+                    'Multi-message'     : ('yes' if obj.multi_msg else 'no'),
+                    'Flags'             : obj.flags or '(none)',
+                    'Position'          : obj.position.value,
+                    'Attachment Header' : ('yes' if obj.attachment_header else 'no')
                 })
 
                 if obj.multi_msg:
@@ -1172,6 +1175,9 @@ class ReCensor:
         name_check = self.check_name(ctx, name)
         settings = self.settings.get(server.id)
         pattern = pattern.lstrip(' ')
+
+        if len(pattern) >= 2 and pattern[0] == pattern[-1] == '"':
+            pattern = pattern[1:-1]
 
         if name_check:
             await self.bot.say(name_check)
@@ -1832,7 +1838,10 @@ class ReCensor:
         settings = self.settings.get(server.id)
         name = filter_name.lower()
         _filter = settings and settings.get_filter(name)
-        pattern = pattern.strip()
+        pattern = pattern.lstrip()
+
+        if len(pattern) >= 2 and pattern[0] == pattern[-1] == '"':
+            pattern = pattern[1:-1]
 
         if not _filter:
             await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
