@@ -14,7 +14,7 @@ from random import randint
 from math import ceil
 from collections import defaultdict
 
-__version__ = '2.0.2'
+__version__ = '2.0.3'
 
 log = logging.getLogger("red.scheduler")
 log.setLevel(logging.INFO)
@@ -32,8 +32,7 @@ UNIT_TABLE = (
 
 
 class Event:
-    __slots__ = ['name', 'channel', 'server', 'author', 'command',
-                 'timedelta', 'repeat', 'starttime']
+    __slots__ = ['name', 'channel', 'server', 'author', 'command', 'timedelta', 'repeat', 'starttime']
 
     def __init__(self, **data):
         self.name = data['name']
@@ -53,12 +52,20 @@ class Event:
         return hash(self._key(self))
 
     def __eq__(self, other):
-        if type(self) is not type(other):
+        if not isinstance(other, Event):
             return False
+
         for k in self.__slots__:
             if getattr(self, k) != getattr(other, k):
                 return False
+
         return True
+
+    def __lt__(self, other):
+        if not isinstance(other, Event):
+            raise TypeError('only Event can be compared')
+
+        return Event._key(self) < Event._key(other)
 
 
 class BadTimeExpr(ValueError):
@@ -187,8 +194,7 @@ class Scheduler:
 
         await self.queue.put((fut, event))
 
-        log.debug('Added "{}" to the scheduler queue at {}'.format(event.name,
-                                                                   fut))
+        log.debug('Added "{}" to the scheduler queue at {}'.format(event.name, fut))
 
     async def _add_event(self, name, command, dest_server, dest_channel,
                          author, timedelta, repeat=False, start=None):
@@ -332,8 +338,7 @@ class Scheduler:
 
         Both intervals are any combination of units: 1s, 2m, 3h, 5d, 1w.
         """
-        await self._add_centralized(ctx, name, interval, command, True,
-                                    start_in=start_in)
+        await self._add_centralized(ctx, name, interval, command, True, start_in=start_in)
 
     async def _add_centralized(self, ctx, name, interval, command,
                                repeat, start=None, start_in=None):
@@ -394,8 +399,7 @@ class Scheduler:
         log.info(logmsg.format(name, command, channel.name,
                                server.name, interval, start.timestamp()))
 
-        await self._add_event(name, command, server, channel, author,
-                              interval, repeat, start)
+        await self._add_event(name, command, server, channel, author, interval, repeat, start)
 
         timeexpr = _generate_timespec(interval)
 
@@ -477,8 +481,10 @@ class Scheduler:
             self.dispatch_fake(channel, event.author, event.name, event.command)
 
         t = (schedtime, event)
+
         if t in self.pending:
             del self.pending[t]
+
         self.pending_by_event[event].remove(schedtime)
 
     async def process_queue_event(self):
@@ -490,18 +496,15 @@ class Scheduler:
 
         diff = max(next_time - now, 0)
 
-        if diff < 30:
-            log.debug('scheduling call of "{}" in {}s'.format(
-                next_event.name, diff))
+        if diff < 10:
+            log.debug('scheduling call of "{}" in {}s'.format(next_event.name, diff))
 
-            fut = self.bot.loop.call_later(diff, self.run_coro,
-                                           next_event, next_time)
+            fut = self.bot.loop.call_later(diff, self.run_coro, next_event, next_time)
             self.pending[(next_time, next_event)] = fut
             self.pending_by_event[next_event].append(next_time)
 
             if next_event.repeat:
-                await self._put_event(next_event, next_time,
-                                      next_event.timedelta)
+                await self._put_event(next_event, next_time, next_event.timedelta)
             else:
                 del self.events[next_event.server][next_event.name]
                 self.save_events()
