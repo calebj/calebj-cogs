@@ -167,6 +167,7 @@ The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library
 Most of the configuration will be done with the following commands:
 - `[p]recensor create <name> [pattern]` : creates a new filter
 - `[p]recensor copy <name> <newname> [link]` : Copies an existing filter, with optional link
+- `[p]recensor debug <message_id> [channel]` : Tests a message against all configured filters
 - `[p]recensor test <name>` : interactively tests an existing filter
 - `[p]recensor regex101 [test message]` : opens a pattern in regex101.com with optional test message
 - `[p]recensor help` : displays links to reference material (such as this README)

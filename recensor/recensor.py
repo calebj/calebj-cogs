@@ -58,7 +58,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.3.1'
+__version__ = '2.4.0'
 
 log = logging.getLogger('red.recensor')
 
@@ -617,6 +617,69 @@ class ServerConfig(FilterBase):
 
         return False
 
+    async def debug_message(self, message: Message) -> Tuple[List[Tuple[str, str, Optional[str]]],
+                                                             Optional[Tuple[str, bool]]]:
+        """
+        Return a list of each filter's results and the ultimate action that would be taken, if any
+        """
+        has_white = False
+        match_white = False
+        content_cache = {}
+        list_cache = {}
+        action = None
+        results = []
+
+        for f in self.order:
+            meta_result = f.check_meta(message, list_cache, debug=True)
+
+            if not meta_result[0]:
+                results.append((f.name, 'meta skip', meta_result[1]))
+                continue
+            elif not f.predicate:
+                results.append((f.name, 'no predicate', None))
+                continue
+
+            asciify = f.asciify or (f.asciify is None and self.asciify)
+            ck = (asciify, f.attachment_header)
+
+            if ck in content_cache:
+                content = content_cache[ck]
+            else:
+                content = preprocess_msg(f, message)
+
+                if asciify:
+                    content = asciify_string(content)
+
+                content_cache[ck] = content
+
+            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
+
+            if f.override and match:  # override black or white
+                if action is None:
+                    action = (f.name, not f.mode)
+
+                result = 'override match', match and content[match[0]:match[1]]
+            elif has_white and not f.mode:
+                if action is None:
+                    action = (f.name, not match_white)
+
+                result = 'white->black transition', match and content[match[0]:match[1]]
+            elif f.mode and not f.override:
+                has_white = True
+                match_white |= bool(match)
+                result = 'white test (%s)' % ('hit' if bool(match) else 'miss'), match and content[match[0]:match[1]]
+            elif match:
+                if action is None:
+                    action = (f.name, True)
+
+                result = 'black match', match and content[match[0]:match[1]]
+            else:
+                result = 'default case', None
+
+            results.append((f.name, *result))
+
+        return results, action
+
     async def check_sequence(self, messages: Sequence[Message], list_cache: Optional[dict] = None) -> List[Message]:
         """
         Return a list of messages from the sequence that should be deleted
@@ -761,11 +824,13 @@ class Filter(FilterBase):
 
         return self._predicate
 
-    def check_meta(self, message: Message, cache=None):
+    def check_meta(self, message: Message, cache=None, debug=False):
         """
         Return True if message is eligible for regex check
         """
         if not self.enabled:
+            if debug:
+                return False, 'disabled'
             return False
 
         if cache is None:
@@ -778,8 +843,12 @@ class Filter(FilterBase):
 
         if mos:
             if self.priv_exempt:
+                if debug:
+                    return False, 'immediate priv_exempt'
                 return False
             elif self.priv_exempt is None and self.parent.priv_exempt:
+                if debug:
+                    return False, 'parent priv_exempt'
                 return False
 
         if self.channels_list in cache:
@@ -788,6 +857,8 @@ class Filter(FilterBase):
             cache[self.channels_list] = clr = self.channels_list.check(message.channel)
 
         if clr is False:
+            if debug:
+                return False, 'not in channel list'
             return False
 
         if self.roles_list in cache:
@@ -796,8 +867,12 @@ class Filter(FilterBase):
             cache[self.roles_list] = rlr = self.roles_list.check_iter(message.author.roles)
 
         if rlr is False:
+            if debug:
+                return False, 'not in role list'
             return False
 
+        if debug:
+            return True, 'meta matched'
         return True
 
     def to_json(self):
@@ -1104,7 +1179,8 @@ class ReCensor:
 
                 if obj.multi_msg:
                     if obj.multi_msg_join:
-                        params['Multi-message'] += ', joined with `"%s"`' % obj.multi_msg_join.encode('unicode_escape').decode()
+                        join = obj.multi_msg_join.encode('unicode_escape').decode()
+                        params['Multi-message'] += ', joined with `"%s"`' % join
                     else:
                         params['Multi-message'] += ', joined with `""` (empty string)'
 
@@ -2030,6 +2106,43 @@ class ReCensor:
             await self.bot.say(action)
 
         self._ignore_filters.pop((ctx.message.channel.id, ctx.message.author.id), None)
+
+    @recensor.command(pass_context=True, name='debug')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_debug(self, ctx, message_id: str, channel: discord.Channel = None):
+        """
+        Tests a message against all configured filters
+
+        Channel defaults to the current channel.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+
+        if not settings:
+            await self.bot.say(warning('No settings in this server.'))
+
+        if channel is None:
+            channel = ctx.message.channel
+
+        try:
+            message = await self.bot.get_message(channel, message_id)
+        except discord.HTTPException:
+            await self.bot.say(error('Retrieving the message failed.'))
+            return
+
+        lines = []
+        results, action = await settings.debug_message(message)
+
+        for t in results:
+            lines.append(' | '.join(map(str, t)))
+
+        if action:
+            lines.append('\nAction filter: %s: %s' % (action[0], 'delete' if action[1] else 'allow'))
+        else:
+            lines.append('No action.')
+
+        msg = '\n'.join(lines)
+        await self.bot.say(box(msg))
 
     @recensor.command(pass_context=True, name='regex101', aliases=['101'], rest_is_raw=True)
     @checks.mod_or_permissions(manage_messages=True)
