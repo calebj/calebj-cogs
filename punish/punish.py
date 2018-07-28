@@ -13,7 +13,7 @@ from .utils import checks
 from .utils.chat_formatting import pagify, box, warning, error, info, bold
 from .utils.dataIO import dataIO
 
-__version__ = '2.0.2'
+__version__ = '2.0.3'
 
 try:
     import tabulate
@@ -876,8 +876,8 @@ class Punish:
 
     @commands.command(pass_context=True, no_pm=True)
     async def legacy_cpunish(self, ctx):
-        await self.bot.say("This command is deprecated; use `%squote remove <num>` instead.\n\n"
-                           "This notice will be removed in a future release." % ctx.prefix)
+        await self.bot.say("This command is deprecated; use `%spunish cstart <member> [duration] [reason ...]` "
+                           "instead.\n\nThis notice will be removed in a future release." % ctx.prefix)
 
     @commands.command(pass_context=True, no_pm=True, name='punish-clean')
     async def legacy_punish_clean(self, ctx):
