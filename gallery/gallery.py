@@ -1,22 +1,23 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import discord
 import logging
-import os
 import re
 from time import time
 from discord.ext import commands
-from cogs.utils.dataIO import dataIO
-from cogs.utils.chat_formatting import error
 
-__version__ = '1.3.1'
+from cogs.utils import checks
+from cogs.utils.dataIO import dataIO
+from cogs.utils.chat_formatting import box, error, warning
+
+__version__ = '1.4.0'
 
 logger = logging.getLogger("red.gallery")
 
-PATH = 'data/gallery'
-JSON = PATH + 'settings.json'
+JSON = 'data/gallerysettings.json'
 
 POLL_INTERVAL = 5 * 60  # 5 minutes
+PARALLEL_TASKS = 4
 
 UNIT_TABLE = (
     (('weeks', 'wks', 'w'), 60 * 60 * 24 * 7),
@@ -31,10 +32,11 @@ DEFAULTS = {
     'ARTIST_ROLE' : 'artist',
     'EXPIRATION'  : 60 * 60 * 24 * 2,  # 2 days
     'PIN_EMOTES'  : ['\N{ARTIST PALETTE}', '\N{PUSHPIN}'],
-    'PRIV_ONLY'   : False
+    'PRIV_ONLY'   : False,
+    'PINS_ONLY'   : False
 }
 
-RM_EMOTES = ['❌']
+RM_EMOTES = {'❌'}
 
 # Analytics core
 import zlib, base64
@@ -176,85 +178,140 @@ class Gallery:
     def enabled_in(self, chan: discord.Channel) -> bool:
         return chan.id in self.settings and self.settings[chan.id]['ENABLED']
 
-    async def message_check(self, message: discord.Message) -> bool:
-        assert self.enabled_in(message.channel)
+    def get_message_check(self, channel: discord.Channel, settings: dict = None):
+        assert self.enabled_in(channel)
 
-        server = message.server
-        author = message.author
-        settings = self.settings_for(message.channel)
+        if settings is None:
+            settings = self.settings_for(channel)
+
+        server = channel.server
+        settings = self.settings_for(channel)
         priv_only = settings.get('PRIV_ONLY', False)
+        pins_only = settings.get('PINS_ONLY', False)
 
         mod_role = self.bot.settings.get_server_mod(server).lower()
         admin_role = self.bot.settings.get_server_admin(server).lower()
         artist_role = settings['ARTIST_ROLE'].lower()
-        priv_roles = [mod_role, admin_role]
-        privileged = False
-        if isinstance(author, discord.Member):
-            privileged = any(r.name.lower() in priv_roles + [artist_role]
-                             for r in author.roles)
+        admin_roles = {mod_role, admin_role}
+        priv_roles = admin_roles.union([artist_role])
 
-        message_age = (datetime.utcnow() - message.timestamp).total_seconds()
-        expired = message_age > settings['EXPIRATION']
+        admins = {}
+        privs = {}
 
-        attachment = bool(message.attachments) or bool(message.embeds)
+        pin_emojis = set(settings['PIN_EMOTES'])
+        valid_emojis = pin_emojis | RM_EMOTES
 
-        e_pin = any(e in message.content for e in settings['PIN_EMOTES'])
-        r_pin = False
-        x_pin = False
-        for reaction in message.reactions:
-            if reaction.emoji not in settings['PIN_EMOTES'] + RM_EMOTES:
-                continue
-            users = await self.bot.get_reaction_users(reaction)
-            for user in users:
-                member = server.get_member(user.id)
-                if not member:
+        async def message_check(message: discord.Message) -> bool:
+            author = message.author
+            privileged = privs.get(author.id)
+
+            if isinstance(author, discord.Member) and privileged is None:
+                privileged = privs[author.id] = any(r.name.lower() in priv_roles for r in author.roles)
+
+            has_content = message.attachments or message.embeds
+
+            e_pin = pin_emojis.intersection(message.content or '')
+            r_pin = False
+            x_pin = False
+
+            for reaction in message.reactions:
+                if reaction.emoji not in valid_emojis or x_pin:
                     continue
-                if reaction.emoji in RM_EMOTES and not x_pin:
-                    x_pin |= any(r.name.lower() in priv_roles
-                                 for r in member.roles)
-                elif not r_pin:
-                    r_pin |= any(r.name.lower() in priv_roles + [artist_role]
-                                 for r in member.roles)
-        pinned = r_pin or message.pinned or (e_pin and privileged)
-        keep = pinned or attachment and not (priv_only and not privileged)
-        return expired and (x_pin or not keep)
+                elif (reaction.emoji in pin_emojis) and (r_pin or message.pinned or (e_pin and privileged)):
+                    continue
+
+                users = await self.bot.get_reaction_users(reaction)
+
+                for user in users:
+                    member = server.get_member(user.id)
+
+                    if not member:
+                        continue
+
+                    if reaction.emoji in RM_EMOTES and not x_pin:
+                        x_pin |= admins.get(member.id, False)
+
+                        if not x_pin:
+                            is_admin = admins[member.id] = any(r.name.lower() in admin_roles for r in member.roles)
+
+                            if is_admin:
+                                privs[member.id] = True
+                                x_pin = is_admin
+                    elif not r_pin:
+                        r_pin |= privs.get(member.id, False)
+
+                        if not r_pin:
+                            is_priv = privs[member.id] = any(r.name.lower() in priv_roles for r in member.roles)
+                            r_pin |= is_priv
+
+            pinned = r_pin or message.pinned or (e_pin and privileged)  # All three ways a message can be "pinned"
+            content_keep = has_content and not pins_only                # pins_only overrides presence of content
+            keep = content_keep and not (priv_only and not privileged)  # priv_only also overrides presence of content
+            return x_pin or not (pinned or keep)                        # x_pin overrides both pinned and keep
+
+        return message_check
 
     async def cleanup_task(self, channel: discord.Channel) -> None:
         try:
             to_delete = []
-            async for message in self.bot.logs_from(channel, limit=2000):
-                if await self.message_check(message):
-                    to_delete.append(message)
+            settings = self.settings_for(channel)
+            now = datetime.utcnow()
+            before = now - timedelta(seconds=settings['EXPIRATION'])
+            after = now - timedelta(days=14, seconds=-30)
 
-            await self.mass_purge(to_delete)
+            check = self.get_message_check(channel, settings=settings)
+
+            while True:
+                async for message in self.bot.logs_from(channel, before=before, after=after):
+                    before = message
+                    if await check(message):
+                        to_delete.append(message)
+                else:
+                    break
+
+            while to_delete and to_delete[-1].timestamp < after:
+                to_delete.pop()
+
+            if to_delete:
+                await self.mass_purge(to_delete)
         except Exception as e:
             raise CleanupError(channel, e)
 
     async def loop_task(self):
         await self.bot.wait_until_ready()
+
         try:
             while True:
                 start = time()
-
                 tasks = []
+
                 for cid, d in self.settings.items():
                     if not d['ENABLED']:
                         continue
+
                     channel = self.bot.get_channel(cid)
+
                     if not channel:
-                        logger.warning('Attempted to curate missing channel '
-                                       'ID #%s, disabling.' % cid)
+                        logger.warning('Attempted to curate missing channel ID #%s, disabling.' % cid)
                         d['ENABLED'] = False
                         self.save()
                         continue
+                    elif not channel.permissions_for(channel.server.me).manage_messages:
+                        logger.warning('No manage_messages permissions in channel ID #%s, disabling.' % cid)
+                        d['ENABLED'] = False
+                        self.save()
+                        continue
+
                     tasks.append(self.cleanup_task(channel))
 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for res in results:
-                    if isinstance(res, CleanupError):
-                        logger.exception("Exception cleaning in %s #%s:"
-                                         % (res.channel.server, res.channel),
-                                         exc_info=res.original)
+                for task_group in [tasks[i:i + PARALLEL_TASKS] for i in range(0, len(tasks), PARALLEL_TASKS)]:
+                    results = await asyncio.gather(*task_group, return_exceptions=True)
+
+                    for res in results:
+                        if isinstance(res, CleanupError):
+                            logger.exception("Exception cleaning in %s #%s:" % (res.channel.server, res.channel),
+                                             exc_info=res.original)
+
                 elapsed = time() - start
                 await asyncio.sleep(POLL_INTERVAL - elapsed)
         except asyncio.CancelledError:
@@ -263,14 +320,32 @@ class Gallery:
     @commands.group(pass_context=True, allow_dm=False)
     @checks.mod_or_permissions(manage_messages=True)
     async def galset(self, ctx):
-        """Gallery module settings"""
+        """
+        Gallery module settings
+        """
         if ctx.invoked_subcommand is None:
             await self.bot.send_cmd_help(ctx)
+            if ctx.message.channel.id not in self.settings:
+                await self.bot.say("Settings for %s: not configured." % ctx.message.channel.mention)
+                return
+
+            settings = self.settings_for(ctx.message.channel)
+            await self.bot.say(("Settings for %s:\n" % ctx.message.channel.mention) + box('\n'.join((
+                'Enabled          : ' + ('yes' if settings['ENABLED'] else 'no'),
+                'Artist role name : ' + (settings['ARTIST_ROLE'] or '(not set)'),
+                'Max message age  : ' + _generate_timespec(settings['EXPIRATION']),
+                'Pin emojis       : ' + ', '.join(settings.get('PIN_EMOTES', [])),
+                'Pins only        : ' + ('yes' if settings.get('PINS_ONLY') else 'no'),
+                'Privileged only  : ' + ('yes' if settings.get('PRIV_ONLY') else 'no')
+            ))))
 
     @galset.command(pass_context=True, allow_dm=False)
     async def emotes(self, ctx, *emotes):
-        """Show or update the emotes used to indicate artwork"""
+        """
+        Show or update the emotes used to indicate artwork
+        """
         channel = ctx.message.channel
+
         if not emotes:
             em = self.settings_for(channel)['PIN_EMOTES']
             await self.bot.say('Pin emotes for this channel: ' + ' '.join(em))
@@ -278,17 +353,21 @@ class Gallery:
             if any(len(x) != 1 for x in emotes):
                 await self.bot.say('Error: You can only use unicode emotes.')
                 return
+
             self.update_setting(channel, 'PIN_EMOTES', emotes)
             await self.bot.say('Updated pin emotes for this channel.')
 
     @galset.command(pass_context=True, allow_dm=False)
     async def turn(self, ctx, on_off: bool = None):
-        """Turn gallery message curation on or off"""
+        """
+        Turn gallery message curation on or off
+        """
         channel = ctx.message.channel
         current = self.settings_for(channel)['ENABLED']
         perms = channel.permissions_for(channel.server.me).manage_messages
         adj_bool = current if on_off is None else on_off
         adj = 'enabled' if adj_bool else 'disabled'
+
         if on_off is None:
             await self.bot.say('Gallery cog is %s in this channel.' % adj)
         else:
@@ -296,34 +375,71 @@ class Gallery:
                 await self.bot.say('Already %s.' % adj)
             else:
                 if on_off and not perms:
-                    await self.bot.say('I need the "Manage messages" '
-                                       'permission in this channel to work.')
+                    await self.bot.say('I need the "Manage messages" permission in this channel to work.')
                     return
+
                 self.update_setting(channel, 'ENABLED', on_off)
                 await self.bot.say('Gallery curation %s.' % adj)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def privonly(self, ctx, on_off: bool = None):
-        """Set whether only privileged users' messages are kept
+        """
+        Set whether only privileged users' messages are kept
 
-        If disabled (default), all attachments and embeds are kept."""
+        Moderators, admins, and the artist role are considered privileged.
+
+        If disabled (the default), all attachments and embeds are kept.
+        """
         channel = ctx.message.channel
-        adj = 'enabled' if on_off else 'disabled'
-        priv_only = self.settings_for(channel).get('PRIV_ONLY', False)
-        if on_off == priv_only:
-            await self.bot.say('Privileged-only posts already %s.' % adj)
+        current = self.settings_for(channel).get('PRIV_ONLY', False)
+
+        if on_off is None:
+            adj = 'Currently,'
+            on_off = current
+        elif current == on_off:
+            adj = 'No change:'
         else:
+            adj = 'Updated:'
             self.update_setting(channel, 'PRIV_ONLY', on_off)
-            await self.bot.say('Privileged-only posts %s.' % adj)
+
+        msg = '%s content posted by %s will be kept.' % (adj, 'privileged users' if on_off else 'anyone')
+        await self.bot.say(msg)
+
+    @galset.command(pass_context=True, allow_dm=False)
+    async def pinsonly(self, ctx, on_off: bool = None):
+        """
+        Set whether only pinned messages are kept
+
+        Messages containing the configured emotes in their text, or with a
+        reaction of any of the emotes by a mod or admin, are considered pinned.
+
+        If disabled (default), all attachments and embeds are kept.
+        """
+        channel = ctx.message.channel
+        current = self.settings_for(channel).get('PINS_ONLY', False)
+
+        if on_off is None:
+            adj = 'Currently,'
+            on_off = current
+        elif current == on_off:
+            adj = 'No change:'
+        else:
+            adj = 'Updated:'
+            self.update_setting(channel, 'PINS_ONLY', on_off)
+
+        msg = '%s %s will be kept.' % (adj, 'only pinned messages' if on_off else 'all messages with content')
+        await self.bot.say(msg)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def age(self, ctx, *, timespec: str = None):
-        """Set the maximum age of non-art posts"""
+        """
+        Set the maximum age of non-art posts
+        """
         channel = ctx.message.channel
+
         if not timespec:
             sec = self.settings_for(channel)['EXPIRATION']
-            await self.bot.say('Current maximum age is %s.'
-                               % _generate_timespec(sec))
+            await self.bot.say('Current maximum age is %s.' % _generate_timespec(sec))
         else:
             try:
                 sec = _parse_time(timespec)
@@ -331,17 +447,30 @@ class Gallery:
                 await self.bot.say(error(e.args[0]))
                 return
 
+            if sec >= (14 * 24 * 60 * 60):
+                await self.bot.say(error("Discord limits bulk deletes to messages posted within two weeks. "
+                                         "Please choose a maximum age shorter than that."))
+                return
+
             self.update_setting(channel, 'EXPIRATION', sec)
-            await self.bot.say('Maximum post age set to %s.' %
-                               _generate_timespec(sec))
+            msg = 'Maximum post age set to %s.' % _generate_timespec(sec)
+
+            if sec < POLL_INTERVAL:
+                poll_spec = _generate_timespec(POLL_INTERVAL)
+                msg += '\n\n' + warning('Note: this cog only checks message history every %s.' % poll_spec)
+
+            await self.bot.say(msg)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def role(self, ctx, role: discord.Role = None):
-        """Sets the artist role"""
+        """
+        Sets the artist role
+        """
         channel = ctx.message.channel
+
         if role is None:
             role = self.settings_for(channel)['ARTIST_ROLE']
-            await self.bot.say('Artist role is currently %s' % role)
+            await self.bot.say('Artist role name is currently %s.' % role)
         else:
             self.update_setting(channel, 'ARTIST_ROLE', role.name)
             await self.bot.say('Artist role set.')
@@ -362,12 +491,6 @@ class Gallery:
             self.analytics.command(ctx)
 
 
-def check_folders():
-    if not os.path.exists(PATH):
-        print("Creating %s folder..." % PATH)
-        os.makedirs(PATH)
-
-
 def check_files():
     if not dataIO.is_valid_json(JSON):
         print("Creating empty %s" % JSON)
@@ -375,6 +498,5 @@ def check_files():
 
 
 def setup(bot):
-    check_folders()
     check_files()
     bot.add_cog(Gallery(bot))

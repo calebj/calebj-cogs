@@ -18,6 +18,7 @@ This repo contains cogs I've written, as well as those I've modified and republi
   * [ActivityLog](#activitylog)
   * [Captcha](#captcha)
   * [EmbedWiz](#embedwiz)
+  * [Gallery](#gallery)
   * [Punish](#punish)
   * [ReCensor](#recensor)
   * [Scheduler](#scheduler)
@@ -58,7 +59,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * duel: Procedurally generated duel with a flexible lexicon system.
 * [embedwiz](#embedwiz): A simple tool to generate and post custom embeds.
 * galias: Bot-wide command aliases. Only the bot owner can add/remove them.
-* gallery: Automatically clean up comments in content-focused channels.
+* [gallery](#gallery): Automatically clean up comments in content-focused channels.
 * [punish](#punish): Timed text+voice mute with anti-evasion, modlog cases, and more.
 * purgepins: Delete pin notification messages after a per-channel interval.
 * [recensor](#recensor): Filter messages using regular expressions
@@ -172,6 +173,34 @@ Only mods and those with the manage_messages permission can use these subcommand
 * `embedwiz channel [channel] [embed_spec ...]` : posts the embed in the channel `channel` instead.
 * `embedwiz delete [embed_spec ...]` : deletes the command message (and prompt message, if used).
 * `embedwiz edit [channel] [message_id] [embed_spec ...]` : edits **any** existing embed.
+
+### Gallery
+The gallery cog started as a project to automatically remove comments made in art channels after a specified time, while leaving the art posts intact.
+
+Every 5 minutes it checks the message history in a channel, from the configured maximum age through two weeks in the past. For each message, it performs the following checks:
+1. If the message has a ❌ reaction on it from a mod or admin, it's deleted
+2. If `privonly` is enabled and the message isn't by a "privileged" user OR "pinned", it's deleted
+3. If `pinsonly` is enabled and the message isn't "pinned" (see below), it's deleted
+4. If the message doesn't have an attachment or embed, and isn't "pinned", it's deleted
+5. Otherwise, the message is kept
+
+"Pinned" messages describe messages for which any of the following is true:
+1. The message is pinned in the channel (via the Discord pinning feature)
+2. The message text contains any of the configured "pin" emojis, or
+3. The message has any "pin" emoji reactions from a mod, admin, or member with the artist role
+
+"Pin" emojis can be set with `[p]galset emotes`, and default to 🎨 and 📌.
+"Privileged" users are anyone with the mod, admin (according to `[p]modset`) or artist (`[p]galset role`) role.
+
+The cog is configured for the current channel using the following commands:
+- `[p]galset turn [on_off]` : enable or disable message cleanup
+- `[p]galset privonly [on_off]` : set or display whether only privileged users' messages are kept
+- `[p]galset pinsonly [on_off]` : set or display whether only pinned messages are kept
+- `[p]galset emotes [emote1 emote2 ...]` : set or display the "pin" emojis
+- `[p]galset age [timespec]` : set or display the maximum age for non-art messages
+- `[p]galset role [role]` : enable or disable the gallery cog
+
+To show the current settings, run `[p]galset` without a subcommand.
 
 ### Punish
 The punish cog automatically sets itself up in most cases. In case some role configurations need to be re-applied, the role needs to be recreated, etc., run `[p]punishset setup`.
