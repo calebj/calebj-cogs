@@ -116,6 +116,8 @@ Admins and members with the Manage Serve permission can run these commands:
 * `[p]captchaset dm [on|off]` : set whether captchas are sent via DMs
 * `[p]captchaset enabled [on|off]` : turns the cog on and off in the server
 * `[p]captchaset kick-delay [duration]` : set how long to wait for a correct code before kicking
+* `[p]captchaset on-join [on|off]` : set whether members are challenged upon joining (default on)
+* `[p]captchaset on-role [on|off]` : set whether add/removing the un/verified role triggers a challenge (default on)
 * `[p]captchaset retry-delay [duration]` : set how long members have to wait to regenerate their code
 * `[p]captchaset role [role]` : set which role the cog uses to mark un/verified members
 * `[p]captchaset role-mode [[un]verified]` : set whether the role means members are verified or unverified

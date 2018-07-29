@@ -18,7 +18,7 @@ from .utils.dataIO import dataIO
 
 
 __author__ = "GrumpiestVulcan 🖖"
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 DATA_DIR = 'data/captcha/'
 CHARS = ''.join(sorted(set(string.digits + string.ascii_uppercase) - set('oO01lI')))
@@ -183,6 +183,10 @@ class ServerConfig:
         self.role_mode = data.get('role_mode', True)
         # Send challenge via DM?
         self.use_dm = data.get('use_dm', False)
+        # Send challenge on member join?
+        self.on_join = data.get('on_join', True)
+        # Send challenge on role add/remove
+        self.on_role = data.get('on_role', True)
 
     async def cancel(self, member: discord.Member) -> bool:
         if member.id not in self.pending:
@@ -400,16 +404,18 @@ class ServerConfig:
 
     def to_json(self):
         return {
-            'challenge_length'  : self.challenge_length,
-            'challenge_type'    : self.challenge_type.value,
-            'channel_id'        : self.channel_id,
-            'enabled'           : self.enabled,
-            'kick_timeout'      : self.kick_timeout,
-            'pending'           : self.pending,
-            'retry_cooldown'    : self.retry_cooldown,
-            'role_id'           : self.role_id,
-            'role_mode'         : self.role_mode,
-            'use_dm'            : self.use_dm
+            'challenge_length' : self.challenge_length,
+            'challenge_type'   : self.challenge_type.value,
+            'channel_id'       : self.channel_id,
+            'enabled'          : self.enabled,
+            'kick_timeout'     : self.kick_timeout,
+            'pending'          : self.pending,
+            'retry_cooldown'   : self.retry_cooldown,
+            'role_id'          : self.role_id,
+            'role_mode'        : self.role_mode,
+            'use_dm'           : self.use_dm,
+            'on_join'          : self.on_join,
+            'on_role'          : self.on_role
         }
 
 
@@ -575,6 +581,8 @@ class Captcha:
             await self.bot.say('\n'.join((
                 '**Current settings:**'
                 'Enabled: ' + ('yes' if settings.enabled else 'no'),
+                'Challenge on join: ' + ('yes' if settings.on_join else 'no'),
+                'Challenge on role add/removal: ' + ('yes' if settings.on_role else 'no'),
                 'Channel: ' + (settings.channel.mention if settings.channel else 'not set'),
                 'Role: @' + (settings.role.name if settings.role else 'not set'),
                 'Kick delay: ' + (_generate_timespec(settings.kick_timeout) if settings.kick_timeout else 'disabled'),
@@ -830,6 +838,56 @@ class Captcha:
 
         await self.bot.say(msg)
 
+    @captchaset.command(pass_context=True, name='on-join')
+    async def captchaset_on_join(self, ctx, yes_no: bool = None):
+        """
+        Sets or displays whether members will be challenged upon joining
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+
+        if (yes_no is not None) and not settings:
+            self.settings[server.id] = settings = ServerConfig(self, server.id, on_join=yes_no)
+            desc = 'will ' + ('now' if yes_no else 'no longer')
+            self.save()
+        elif yes_no is None:
+            yes_no = settings and settings.on_join
+            desc = 'currently ' + ("will" if yes_no else "won't")
+        elif settings.on_join == yes_no:
+            desc = 'already ' + ("will" if yes_no else "won't")
+        else:
+            desc = 'will ' + ('now' if yes_no else 'no longer')
+            settings.on_join = yes_no
+            self.save()
+
+        msg = 'Members %s be automatically challenged with a captcha upon joining.' % (desc)
+        await self.bot.say(msg)
+
+    @captchaset.command(pass_context=True, name='on-role')
+    async def captchaset_on_role(self, ctx, yes_no: bool = None):
+        """
+        Sets or displays challenge upon add/removing the un/verified role
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+
+        if (yes_no is not None) and not settings:
+            self.settings[server.id] = settings = ServerConfig(self, server.id, on_role=yes_no)
+            desc = 'will ' + ('now' if yes_no else 'no longer')
+            self.save()
+        elif yes_no is None:
+            yes_no = settings and settings.on_role
+            desc = 'currently ' + ("will" if yes_no else "won't")
+        elif settings.on_role == yes_no:
+            desc = 'already ' + ("will" if yes_no else "won't")
+        else:
+            desc = 'will ' + ('now' if yes_no else 'no longer')
+            settings.on_role = yes_no
+            self.save()
+
+        msg = 'Members %s be challenged when the un/verified role is added/removed.' % (desc)
+        await self.bot.say(msg)
+
     @captchaset.command(pass_context=True, name='type')
     async def captchaset_type(self, ctx, challenge_type: str = None):
         """
@@ -906,7 +964,7 @@ class Captcha:
         server = member.server
         settings = self.settings.get(server.id)
 
-        if member.bot or not (settings and settings.enabled):
+        if member.bot or not (settings and settings.enabled and settings.on_join):
             return
 
         await self.challenge(member)
@@ -919,6 +977,28 @@ class Captcha:
             return
 
         await self.cancel(member)
+
+    async def on_member_update(self, before, after):
+        server = before.server
+        settings = self.settings.get(server.id)
+
+        if before.bot and before.roles == after.roles:
+            return
+        elif not (settings and settings.enabled and settings.role):
+            return
+
+        role = settings.role
+        in_before = role in before.roles
+        in_after = role in after.roles
+
+        if in_before == in_after:
+            return
+        # verified mode and role was added OR unverified mode and was removed
+        elif settings.role_mode == in_after:  # cancel challenge
+            await settings.cancel(after)
+        # verified mode and role was removed OR unverified mode and was added
+        elif settings.on_role:  # trigger a challenge if configured to do so
+            await settings.challenge(after)
 
     async def on_message(self, message):
         if message.author.bot:
