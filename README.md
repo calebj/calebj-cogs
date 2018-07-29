@@ -96,6 +96,8 @@ Note: The version of discord.py that Red v2 is based on doesn't have a way to re
 ### Captcha
 Captcha allows you to challenge incoming members with a code they must enter to become verified.
 
+**NOTE:** Attempting to install this cog using `[p]cog install` will fail unless your version of Red is [up to date](https://github.com/Cog-Creators/Red-DiscordBot/commit/e19328188bbfbc551cb9f0e36d3ad78ece0d304e) as of 2018-07-29.
+
 Challenges can be sent and responded to via direct messages or in a server channel, and verification/approval can either be indicated by the presence of or the absence of a role. If an image is impossible to decipher (users get unlimited retries, as incorrect codes are simply ignored), they can say "retry" to get a new one.
 
 The cog supports three types of challenges:
