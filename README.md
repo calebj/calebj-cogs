@@ -395,6 +395,13 @@ Anyone can run these commands:
 * `[p]quote search <query>` : searches quotes by text and displays them in order of relevance
 * `[p]quote show <num>` : displays an individual quote by its number
 
+These commands relate to "global" quotes, which can be accessed in all servers and even by DM:
+* `[p]gquote by-nm <author> [show_all]` : displays one or all global quotes by a non-member author
+* `[p]gquote list [random]` : displays all global quotes, optionally jumping to a random one
+* `[p]gquote me [show_all]` : displays one or all global quotes by the calling member
+* `[p]gquote search <query>` : searches global quotes by text and displays them in order of relevance
+* `[p]gquote show <num>` : displays an individual global quote by its number
+
 Moderators, admins, and people with Manage Messages permissions can use:
 * `[p]quote add <member> <quote ...>` : adds a quote by the specified member
 * `[p]quote add-msg <message ID> [channel]` : adds an entire message as a quote
@@ -402,6 +409,22 @@ Moderators, admins, and people with Manage Messages permissions can use:
 * `[p]quote add-nm <author> <quote ...>` : adds a quote by the specified author
   * this allows quotes from non-members to be added; use `[p]quote by-nm` to display them
 * `[p]quote remove <num>` : deletes a quote by its number
+
+Only server admins can use:
+* `[p]quote global <num> [YES|no]` : set whether a quote should be made global
+  * If run without an argument, defaults to yes
+
+And finally, only the bot owner can use these commands:
+* `[p]gquote add <member> <quote ...>` : adds a global quote by the specified member
+* `[p]gquote add-msg <message ID> [channel]` : adds an entire message as a global quote
+  * channel is required if the message is from a different channel than where the command is run
+* `[p]gquote add-nm <author> <quote ...>` : adds a global quote by the specified author
+  * this allows quotes from non-members to be added; use `[p]gquote by-nm` to display them
+* `[p]gquote remove <num>` : deletes a global quote by its number
+* `[p]gquote unpublish <num>` : unmarks a published quote as global
+  * NOTE: quotes that weren't published from a server cannot be unpublished
+
+The `[p]gquote add` commands will not associate the added quote with a server.
 
 The cog uses sqlite's [FTS4 extension](https://sqlite.org/fts3.html) for text indexing with a [Porter stemming tokenizer](https://tartarus.org/martin/PorterStemmer/), and ranks search results by the [Okapi BM25](https://en.wikipedia.org/wiki/Okapi_BM25) algorithm.
 
