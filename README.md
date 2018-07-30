@@ -17,6 +17,7 @@ This repo contains cogs I've written, as well as those I've modified and republi
 * [Cog Documentation](#cog-documentation)
   * [ActivityLog](#activitylog)
   * [Captcha](#captcha)
+  * [Duel](#duel)
   * [EmbedWiz](#embedwiz)
   * [Gallery](#gallery)
   * [Punish](#punish)
@@ -56,7 +57,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * datadog: Publish various metrics and events to a local statsd instance.
 * description: Change the header of Red's [p]help command.
 * dice: Wraps the python-dice library. Command is `[p]dice <expression>`.
-* duel: Procedurally generated duel with a flexible lexicon system.
+* [duel](#duel): Procedurally generated duel with a flexible lexicon system.
 * [embedwiz](#embedwiz): A simple tool to generate and post custom embeds.
 * galias: Bot-wide command aliases. Only the bot owner can add/remove them.
 * [gallery](#gallery): Automatically clean up comments in content-focused channels.
@@ -133,6 +134,28 @@ Admins and members with the Manage Serve permission can run these commands:
 * `[p]captchaset type [image|plain|wheezy]` : set the type of captchas to generate (see table above)
 
 `[duration]` can be any combination of numbers and units, e.g. 5m30s, or a long format such as "5 minutes and 30 seconds". Valid units are `s`, `m`, `h`, `d`, `w`. It can also be `none` or `disable`.
+
+### Duel
+The Duel cog was written as a fun exercise in procedural generation. It only has a few commands:
+
+* `[p]duel <member>` : starts a randomly generated duel with a member
+* `[p]duels list [N=10]` : display the top N entries in the duels leaderboard 
+* `[p]protect me` : enable or purchase duel protection (set by admins)
+* `[p]protected` : display a list of all protected members and roles
+* `[p]unprotect me` : opt out of duel protection
+
+Moderators can use the following commands:
+* `[p]protect user <member>` : add a member to the protected users list
+* `[p]unprotect user <member>` : remove a member from the protected users list
+
+And administrators can use these commands:
+* `[p]duels reset` : clear duel score history (preserves settings and protection list)
+* `[p]duels editmode [yes_no]` : Set or show whether duels will edit in-place
+  * Disabled by default. When disabled, each move will be a new message.
+* `[p]protect price [option]` : enable, disable, or set the price of self-protection
+  * Self-protection is disabled by default. Options are "free", "disable", or a number.
+* `[p]protect role <role>` : add a role to the protection list
+* `[p]unprotect role <role>` : remove a role from the protection list
 
 ### EmbedWiz
 EmbedWiz is a fairly simply cog.
