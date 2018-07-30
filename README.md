@@ -1,6 +1,12 @@
 # CalebJ Cogs
-#### General, fun and utility modules for [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot/)
-[![Patreon](https://img.shields.io/badge/Support-me!-orange.svg)](https://www.patreon.com/calebj) [![Donate](https://img.shields.io/badge/Paypal-donate-blue.svg)](https://paypal.me/calebrj) [![discord.py](https://img.shields.io/badge/discord-py-blue.svg)](https://github.com/Rapptz/discord.py) [![Red-DiscordBot](https://img.shields.io/badge/red-bot-red.svg)](https://github.com/Cog-Creators/Red-DiscordBot/) [![Support server invite](https://img.shields.io/discord/240154543684321280.svg)](https://discord.gg/2DacSZ7) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+#### General, fun and utility modules for [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot/) v2.
+
+[![Patreon](https://img.shields.io/badge/Support-me!-f96854.svg)](https://www.patreon.com/calebj)
+[![Donate](https://img.shields.io/badge/Paypal-donate-0070ba.svg)](https://paypal.me/calebrj)
+[![discord.py](https://img.shields.io/badge/discord.py-async-blue.svg)](https://github.com/Rapptz/discord.py)
+[![Red-DiscordBot](https://img.shields.io/badge/Red--DiscordBot-v2-red.svg)](https://github.com/Cog-Creators/Red-DiscordBot/)
+[![Support server invite](https://img.shields.io/discord/240154543684321280.svg?colorB=7289DA)](https://discord.gg/2DacSZ7)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-6f42c1.svg)](http://makeapullrequest.com)
 
 This repo contains cogs I've written, as well as those I've modified and republished when a PR was either unwanted or too drastic of a change from the original cog's scope.
 
@@ -19,7 +25,7 @@ This repo contains cogs I've written, as well as those I've modified and republi
   * [Watchdog](#watchdog)
   * [XORole](#xorole)
 * [Contributing](#contributing)
-* [Analytics and Privacy Policy](#analytics-and-privacy-policy)
+* [Usage Statistics and Privacy Policy](#usage-statistics-and-privacy-policy)
 * [License and Copyright](#license-and-copyright)
 
 ## Installation
@@ -74,20 +80,20 @@ There is no support for uploading logfiles yet, though it is planned. Logging of
 Activitylog can record the following events:
 * Channel messages (per-channel): `logset channel {on|off} [#channel-name]`
   * Includes edits and deletions
-* Server events (per-server): `logset events {on|off}`
+* Server events (per-server): `logset events [on|off]`
   * Member changes: nickname, username, roles, join/leave, ban, kick
   * Server changes: name, region, owner, icon
   * Channel changes: create, delete, name, position, topic, permissions
   * Role changes: create, delete, permissions, name, color, hoist, mentionable, rank
-* Server override (per-server): `logset server {on|off}`
+* Server override (per-server): `logset server [on|off]`
   * If this is `on`, all channels and server events are logged.
-* Direct messages: `logset dm {on|off}`
+* Direct messages: `logset dm [on|off]`
   * Also includes edits and deletions
-* Message attachments: `logset attachments {on|off}`
-* Default setting: `logset default {on|off}`
+* Message attachments: `logset attachments [on|off]`
+* Default setting: `logset default [on|off]`
   * If you haven't set an option on or off, this default is used.
   * Server override, global override, and attachments don't use this.
-* Global override: `logset everything {on|off}`
+* Global override: `logset everything [on|off]`
   * If this is `on`, the bot will log everything.
   * Attachment downloading is still its own setting.
 
@@ -161,7 +167,6 @@ And now for [something completely different](https://www.youtube.com/watch?v=ltm
 Which looks like this:
 
 ![Test embed](embedwiz/test.png?raw=true)
-
 
 Only mods and those with the manage_messages permission can use these subcommands:
 * `embedwiz channel [channel] [embed_spec ...]` : posts the embed in the channel `channel` instead.
@@ -441,10 +446,10 @@ Please submit patches to code or documentation as GitHub pull requests!
 
 Contributions must be licensed under the GNU GPLv3. The contributor retains the copyright. I won't accept new cogs unless I want to support them.
 
-## Analytics and Privacy Policy
-Most of the cogs in this repo use a custom [usage reporting tool](_analytics/analytics_core.py) which, upon being loaded, checks to see if you have opted in before sending anything. I use [Matomo](https://matomo.org/) on my webserver to record events, and do not share the data with anyone else. All user IDs are hashed before sending to make them unique without being able to identify the users in question. More information can be found in my [privacy policy](PRIVACY.md).
+## Usage Statistics and Privacy Policy
+Most of the cogs in this repo use a custom [usage reporting tool](_analytics/analytics_core.py) which, upon being loaded, checks to see if you have opted in before sending anything. I use [Matomo](https://matomo.org/) on my webserver to record events, and don't share the data with anyone else. All user IDs are hashed before sending to make them unique without being able to identify the users (or bots) in question, and IP addresses are stripped. Only "Pseudonymous Data" is collected or stored, and since none of it is for commercial use, I am not obligated to respond to GDPR requests. More information can be found in my [privacy policy](PRIVACY.md).
 
-The gibberish seen at the top of most of the cogs is actually a compressed form of this analytics agent generated by [pyminifier](https://github.com/liftoff/pyminifier) and [this script](_analytics/build_analytics.sh), then updated by [this script](_analytics/substitute_analytics.sh). I included these scripts to allow others to easily verify that the output is identical.
+The gibberish seen at the top of most of the cogs is actually a compressed form of the tool's code, generated by [pyminifier](https://github.com/liftoff/pyminifier) and [this script](_analytics/build_analytics.sh), then updated by [this script](_analytics/substitute_analytics.sh). I included these scripts to allow others to easily verify that the output is identical.
 
 ## License and Copyright
 Except for [scheduler](scheduler/), which is licensed under the [MIT license](scheduler/LICENSE), all code in this repository is licensed under the [GNU General Public License version 3](LICENSE).
