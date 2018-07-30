@@ -15,7 +15,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.3.2'
+__version__ = '1.4.0'
 
 # Analytics core
 import zlib, base64
@@ -94,9 +94,10 @@ class EmbedWizard:
             self.bot.logger.exception(error)
             self.analytics = None
 
-    @commands.group(pass_context=True, no_pm=True, invoke_without_command=True)
+    @commands.group(pass_context=True, invoke_without_command=True)
     async def embedwiz(self, ctx, *, specification):
-        """Posts an embed according to the given specification:
+        """
+        Posts an embed according to the given specification:
 
         Title;color;footer text;footer_icon;image_url;thumbnail_url;body text
 
@@ -123,50 +124,71 @@ class EmbedWizard:
                 await self.bot.say(embed=embed)
 
     @checks.mod_or_permissions(manage_messages=True)
-    @embedwiz.command(name='channel', pass_context=True, no_pm=True)
+    @embedwiz.command(name='channel', pass_context=True)
     async def embed_channel(self, ctx, channel: discord.Channel, *, specification):
-        """Posts an embed in another channel according to the spec.
+        """
+        Posts an embed in another channel according to the spec.
 
         See [p]help embedwiz for more information.
         """
+        member = channel.server and channel.server.get_member(ctx.message.author.id)
+        override = self._check_override(member)
 
-        if not channel.permissions_for(ctx.message.author).send_messages:
+        if channel != ctx.message.channel and not member:
+            await self.bot.say(error("Channel is private or you aren't in the server that channel belongs to."))
+            return
+        elif not channel.permissions_for(member).send_messages:
             msg = error("You don't have permissions to post there!")
             await self.bot.say(msg)
             return
 
-        embed = await self._parse_embed(ctx, specification)
+        embed = await self._parse_embed(ctx, specification, force_author=not override)
+
         if embed:
             await self.bot.send_message(channel, embed=embed)
+
+            if channel != ctx.message.channel:
+                await self.bot.say("Embed sent to %s." % channel.mention)
 
     @checks.mod_or_permissions(manage_messages=True)
     @embedwiz.command(name='delete', pass_context=True, no_pm=True)
     async def embed_del(self, ctx, *, specification):
-        """Posts an embed according to the spec after deleting the original message.
+        """
+        Posts an embed according to the spec after deleting the original message.
 
         See [p]help embedwiz for more information.
         """
         perms = ctx.message.channel.permissions_for(ctx.message.server.me)
         can_delete = perms.manage_messages
+
         if not can_delete:
             msg = "I can't delete your command message! Posting anyway..."
             await self.bot.say(warning(msg))
 
         tup = await self._parse_embed(ctx, specification, return_todelete=True)
+
         if tup:
             embed, to_delete = tup
             await self.bot.say(embed=embed)
+
             if not can_delete:
                 return
+
             for msg in [ctx.message, *to_delete]:
                 await self.bot.delete_message(msg)
 
-    @embedwiz.command(name='edit', pass_context=True, no_pm=True)
+    @embedwiz.command(name='edit', pass_context=True)
     async def embed_edit(self, ctx, channel: discord.Channel, message_id: int, *, specification):
-        """Edits an existing embed according to the spec.
+        """
+        Edits an existing embed according to the spec.
 
         See [p]help embedwiz for more information.
         """
+        member = channel.server and channel.server.get_member(ctx.message.author.id)
+
+        if channel != ctx.message.channel and not member:
+            await self.bot.say(error("Channel is private or you aren't in the server that channel belongs to."))
+            return
 
         try:
             msg = await self.bot.get_message(channel, str(message_id))
@@ -185,39 +207,49 @@ class EmbedWizard:
             return
 
         old_embed = msg.embeds[0]
-
-        user = ctx.message.author
-        server = ctx.message.server
-        admin_role = self.bot.settings.get_server_admin(server)
-        mod_role = self.bot.settings.get_server_mod(server)
-
-        override = (user.id == self.bot.settings.owner) or \
-                   discord.utils.get(user.roles, name=admin_role) or \
-                   discord.utils.get(user.roles, name=mod_role)
+        override = self._check_override(member)
 
         if override:
             pass
         elif 'author' not in old_embed or 'name' not in old_embed['author']:
-            await self.bot.say(error("That embed doesn't have an author "
-                                     "set, and you aren't a mod or admin."))
+            await self.bot.say(error("That embed doesn't have an author set, and you aren't a mod or admin."))
             return
-        elif old_embed['author']['name'].split('(')[-1][:-1] != user.id:
+        elif old_embed['author']['name'].split('(')[-1][:-1] != ctx.message.author.id:
             await self.bot.say(error("That embed isn't yours."))
             return
 
-        new_embed = await self._parse_embed(ctx, specification)
+        new_embed = await self._parse_embed(ctx, specification, force_author=not override)
         await self.bot.edit_message(msg, embed=new_embed)
         await self.bot.say('Embed edited successfully.')
 
-    async def _parse_embed(self, ctx, specification, return_todelete=False):
+    def _check_override(self, member):
+        server = isinstance(member, discord.Member) and member.server
+
+        if member and server:
+            admin_role = self.bot.settings.get_server_admin(server)
+            mod_role = self.bot.settings.get_server_mod(server)
+
+            return any((member.id == self.bot.settings.owner,
+                        member.id in self.bot.settings.co_owners,
+                        member == server.owner,
+                        discord.utils.get(member.roles, name=admin_role),
+                        discord.utils.get(member.roles, name=mod_role)))
+        else:
+            return False
+
+    async def _parse_embed(self, ctx, specification, *, return_todelete=False, force_author=False):
         to_delete = []
         author = ctx.message.author
         specification = specification.strip()
-
         set_author = True
-        if specification.startswith('-noauthor '):
+
+        if specification.startswith('-noauthor'):
+            if force_author:
+                await self.bot.say(error("You cannot post there using -noauthor."))
+                return
+
             set_author = False
-            specification = specification[10:]
+            specification = specification[9:]
 
         # split = specification.split(';', 6)
         split = re.split(r'(?<!(?<!\\)\\);', specification, 6)
@@ -227,8 +259,9 @@ class EmbedWizard:
         for i, s in enumerate(split[:-1]):
             if s.endswith(r'\\'):
                 split[i] = s[:-1]
-            
+
         nfields = len(split)
+
         if nfields != 7:
             op = 'many' if nfields > 7 else 'few'
             msg = 'Invalid specification: got too {} fields ({}, expected 7)'
