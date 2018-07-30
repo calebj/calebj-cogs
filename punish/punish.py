@@ -8,19 +8,27 @@ import re
 import textwrap
 import time
 
-from .mod import CaseMessageNotFound, NoModLogAccess
 from .utils import checks
 from .utils.chat_formatting import pagify, box, warning, error, info, bold
 from .utils.dataIO import dataIO
 
-__version__ = '2.0.3'
-
 try:
     import tabulate
-except Exception as e:
-    raise RuntimeError("You must run `pip3 install tabulate`.") from e
+except ImportError as e:
+    raise RuntimeError("Punish requires tabulate. To install it, run `pip3 install tabulate` from the console or "
+                       "`[p]debug bot.pip_install('tabulate')` from in Discord.") from e
 
 log = logging.getLogger('red.punish')
+
+try:
+    from .mod import CaseMessageNotFound, NoModLogAccess
+    ENABLE_MODLOG = True
+except ImportError:
+    log.warn("Could not import modlog exceptions from mod cog, most likely because mod.py was deleted or Red is out of "
+             "date. Modlog integration will be disabled.")
+    ENABLE_MODLOG = False
+
+__version__ = '2.0.4'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -508,7 +516,7 @@ class Punish:
         caseno = data.get('caseno')
         mod = self.bot.get_cog('Mod')
 
-        if mod and caseno:
+        if mod and caseno and ENABLE_MODLOG:
             moderator = ctx.message.author
             case_error = None
 
@@ -1013,9 +1021,9 @@ class Punish:
         # Call time() after getting the role due to potential creation delay
         now = time.time()
         until = (now + duration + 0.5) if duration else None
+        duration_ok = (case_min_length is not None) and ((duration is None) or duration >= case_min_length)
 
-        if mod and (case_min_length is not None) and self.can_create_cases() and ((duration is None)
-                                                                                  or duration >= case_min_length):
+        if mod and self.can_create_cases() and duration_ok and ENABLE_MODLOG:
             mod_until = until and datetime.utcfromtimestamp(until)
 
             try:
@@ -1057,17 +1065,18 @@ class Punish:
 
         if duration:
             timespec = _generate_timespec(duration)
+
             if using_default:
                 timespec += ' (the default)'
+
             msg += ' I will remove %s in %s.' % (subject, timespec)
 
-        if (case_min_length is not None) and not self.can_create_cases() and ((duration is None)
-                                                                              or duration >= case_min_length):
+        if duration_ok and not (self.can_create_cases() and ENABLE_MODLOG):
             if mod:
                 msg += '\n\n' + warning('If you can, please update the bot so I can create modlog cases.')
             else:
                 pass  # msg += '\n\nI cannot create modlog cases if the `mod` cog is not loaded.'
-        elif case_error:
+        elif case_error and ENABLE_MODLOG:
             if isinstance(case_error, CaseMessageNotFound):
                 case_error = 'the case message could not be found'
             elif isinstance(case_error, NoModLogAccess):
