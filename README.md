@@ -98,6 +98,13 @@ Activitylog can record the following events:
 * Global override: `logset everything [on|off]`
   * If this is `on`, the bot will log everything.
   * Attachment downloading is still its own setting.
+* Log rotation: `logset rotation [period]`, where period is:
+  * `none` : disable log rotation
+  * `d` : one log file per day (starts 00:00Z each day)
+  * `w` : one log file per week (starts 00:00Z each Monday)
+  * `m` : one log file per month (starts 00:00Z on first day of month)
+  * `y` : one log file per year (starts 00:00Z Jan 1)
+  * Example: if monthly, all logs for July 2018 in channel ID 1234 would be in `20180701--P1M_1234.log`
 
 Note: The version of discord.py that Red v2 is based on doesn't have a way to record audit logs, so there's no way to record which member made a particular change.
 
