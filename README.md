@@ -443,6 +443,8 @@ Moderators, admins, and people with Manage Messages permissions can use:
 Only server admins can use:
 * `[p]quote global <num> [YES|no]` : set whether a quote should be made global
   * If run without an argument, defaults to yes
+* `[p]quote link [server_id]` : adds a link to a server ID if provided, or lists all links
+* `[p]quote unlink <server_id> ` : removes a link to a server by ID
 
 And finally, only the bot owner can use these commands:
 * `[p]gquote add <member> <quote ...>` : adds a global quote by the specified member

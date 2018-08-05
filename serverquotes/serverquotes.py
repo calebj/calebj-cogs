@@ -16,13 +16,14 @@ from textwrap import dedent
 from typing import Iterable, Optional, Sequence
 
 from .utils.chat_formatting import error, warning
-from .utils.checks import check_permissions, is_owner
+from .utils.checks import check_permissions, is_owner, admin_or_permissions, mod_or_permissions
 from .utils.dataIO import dataIO
 
 
 PATH = 'data/serverquotes/'
 JSON = PATH + 'quotes.json'
 SQLDB = PATH + 'quotes.sqlite'
+DEFAULT_UPDATE_KEYS = (('quote_id',), ('server_id', 'server_quote_id'))
 
 # message links in embeds don't work yet
 # PERMALINK = 'https://discordapp.com/channels/{server_id}/{channel_id}/{message_id}'
@@ -120,6 +121,14 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url TEXT,
     UNIQUE (username, discriminator)
 );
+
+CREATE TABLE IF NOT EXISTS server_links (
+    from_id INTEGER NOT NULL,
+    to_id INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id)
+);
+
+CREATE INDEX IF NOT EXISTS server_links_from_id ON server_links(from_id);
 
 DROP VIEW IF EXISTS quotes_view;
 
@@ -227,7 +236,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.3.1'
+__version__ = '2.4.0'
 
 
 class SortField(Enum):
@@ -323,6 +332,19 @@ def bm25(raw_match_info, *args):
     return -score
 
 
+def _map_scalar_or_vector(value, operation, check_type=None):
+    if check_type is not None:
+        def conv(x):
+            return operation(x) if isinstance(x, check_type) else x
+    else:
+        conv = operation
+
+    if isinstance(value, Iterable) and not isinstance(value, str):
+        return tuple(conv(x) for x in value)
+    else:
+        return conv(value)
+
+
 class ServerQuotes:
     """
     Store and retrieve memorable quotes from your server
@@ -362,18 +384,6 @@ class ServerQuotes:
         self.db.commit()
 
     # Authorization/permission checks
-
-    async def _authorize_add(self, ctx):
-        if check_permissions(ctx, {'administrator': True}):
-            return True
-        else:
-            return self.is_mod_or_superior(ctx.message.author)
-
-    async def _authorize_global(self, ctx):
-        if check_permissions(ctx, {'administrator': True}):
-            return True
-        else:
-            return self.is_mod_or_superior(ctx.message.author, admin_only=True)
 
     async def _authorize_del(self, ctx, record):
         if record['added_by'] == int(ctx.message.author.id):
@@ -512,17 +522,17 @@ class ServerQuotes:
         for k in ('server', 'author'):
             if k in kwargs:
                 obj = kwargs.pop(k)
-                kwargs[k + '_id'] = obj and obj.id
+                kwargs[k + '_id'] = obj and _map_scalar_or_vector(obj, lambda x: x.id)
 
                 if k == 'author' and obj.server and 'server_id' not in kwargs:
-                    kwargs['server_id'] = obj.server.id
+                    kwargs['server_id'] = _map_scalar_or_vector(obj, lambda x: x.server.id)
 
-        if isinstance(kwargs.get('added_by'), discord.User):
-            kwargs['added_by'] = kwargs['added_by'].id
+        if 'added_by' in kwargs:
+            kwargs['added_by'] = _map_scalar_or_vector(kwargs['added_by'], lambda x: x.id, check_type=discord.User)
 
         for k in ('quote_id', 'server_id', 'server_quote_id', 'added_by', 'author_id', 'message_id', 'channel_id'):
-            if k in kwargs and isinstance(kwargs[k], str):
-                kwargs[k] = int(kwargs[k])
+            if k in kwargs:
+                kwargs[k] = _map_scalar_or_vector(kwargs[k], int, str)
 
         # for k in ('date_added', 'date_said'):
         #     if isinstance(kwargs.get(k), datetime):
@@ -618,7 +628,7 @@ class ServerQuotes:
             cur = con.execute(sql, params)
             return cur.execute("SELECT * FROM quotes_view_230 WHERE quote_id = last_insert_rowid();").fetchone()
 
-    def _update_quotes(self, key_on=(('quote_id',), ('server_id', 'server_quote_id')), *, enforce_key=True, **kwargs):
+    def _update_quotes(self, key_on=DEFAULT_UPDATE_KEYS, *, where=None, enforce_key=True, **kwargs) -> int:
         if 'message' in kwargs:
             message = kwargs.pop('message')
             message_dict = self._message_to_kwargs(message, set_server=kwargs.get('server') is None)
@@ -626,15 +636,28 @@ class ServerQuotes:
 
         params = self._normalize_kwargs(kwargs)
 
-        where_keys = {}
-        for keys in key_on:
-            if all(k in params for k in keys):
-                if where_keys:
-                    raise ValueError('extra identifying keys: %s' % (keys,))
+        if key_on is not DEFAULT_UPDATE_KEYS and where is not None:
+            raise ValueError("only key_on OR where can be defined, not both")
+        elif where and not isinstance(where, dict):
+            raise TypeError("where must be a dict")
+        elif where:
+            if 'message' in where:
+                message = where.pop('message')
+                message_dict = self._message_to_kwargs(message, set_server=where.get('server') is None)
+                where.update(message_dict)
 
-                where_keys.update({k: params.pop(k) for k in keys})
+            where = self._normalize_kwargs(where)
+        else:
+            where = {}
 
-        if enforce_key and not where_keys:
+            for keys in key_on:
+                if all(k in params for k in keys):
+                    if where:
+                        raise ValueError('extra identifying keys: %s' % (keys,))
+
+                    where.update({k: params.pop(k) for k in keys})
+
+        if enforce_key and not where:
             raise ValueError('no identifying keys found in passed arguments')
         elif not params:
             raise ValueError('no data to update')
@@ -642,7 +665,7 @@ class ServerQuotes:
         columns = list(params)
         params = [params[k] for k in columns]
         sets = ', '.join('%s = ?' % c for c in columns)
-        where, params = self._build_where(where_keys, params)
+        where, params = self._build_where(where, params)
         sql = "UPDATE quotes SET %s %s;" % (sets, where)
 
         with self.db as con:
@@ -658,8 +681,28 @@ class ServerQuotes:
             cursor = con.execute(sql, params)
             return cursor.rowcount
 
+    def _populate_linked_server_ids(self, kwargs):
+        if 'server_id' in kwargs:
+            server_id = kwargs['server_id']
+
+            if not isinstance(server_id, Iterable):
+                server_id = [server_id]
+
+            with self.db as con:
+                params = ','.join('?'*len(server_id))
+                cur = con.execute("SELECT to_id FROM server_links WHERE from_id IN (%s)" % params, server_id)
+                server_id.extend(r['to_id'] for r in cur.fetchall())
+
+            kwargs['server_id'] = server_id
+
+        return kwargs
+
     def _get_quotes(self, sort_field=SortField.QUOTE_ID, sort_direction=SortDirection.ASC, limit=None, **kwargs):
         kwargs = self._normalize_kwargs(kwargs)
+
+        if kwargs.pop('link', False):
+            kwargs = self._populate_linked_server_ids(kwargs)
+
         where, params = self._build_where(kwargs)
 
         sql = "SELECT * FROM quotes_view_230 " + where
@@ -680,8 +723,12 @@ class ServerQuotes:
             cur = con.execute(sql, params)
             return cur.fetchall()
 
-    def _do_search(self, term, limit=10, offset=0, **kwargs):
+    def _do_search(self, term, limit=10, offset=0, link=False, **kwargs):
         kwargs = self._normalize_kwargs(kwargs)
+
+        if link:
+            kwargs = self._populate_linked_server_ids(kwargs)
+
         where, params = self._build_where(kwargs, params=[term], wheres=["content MATCH ?"])
 
         if not self.has_fts:
@@ -738,7 +785,7 @@ class ServerQuotes:
         """
         Allows you to page through a list of all quotes
         """
-        records = self._get_quotes(server=ctx.message.server)
+        records = self._get_quotes(server=ctx.message.server, link=True)
 
         if not records:
             await self.bot.say(warning("There are no quotes in this server!"))
@@ -760,7 +807,7 @@ class ServerQuotes:
         Results are sorted by relevance (uses sqlite FTS4 + Okapi BM25)
         """
         query = query.lstrip()
-        records = self._do_search(query, limit=50, server=ctx.message.server)
+        records = self._do_search(query, limit=50, server=ctx.message.server, link=True)
 
         if not self.has_fts:
             await self.bot.say(warning("Missing FTS extension; please contact the bot owner. If you are the owner, see "
@@ -778,14 +825,18 @@ class ServerQuotes:
         """
         Displays a stored quote by its number
         """
-        records = self._get_quotes(server=ctx.message.server, server_quote_id=num)
+        records = self._get_quotes(server=ctx.message.server, server_quote_id=num, link=True)
 
         if not records:
             await self.bot.say(warning("Couldn't find that quote in this server."))
             return
 
-        embed = self.format_quote_embed(ctx, records[0])
-        await self.bot.say(embed=embed)
+        # If servers are linked, the same server quote ID could have multiple matches
+        if len(records) > 1:
+            await self.embed_menu(ctx, records)
+        else:
+            embed = self.format_quote_embed(ctx, records[0])
+            await self.bot.say(embed=embed)
 
     @commands.cooldown(6, 60, commands.BucketType.channel)
     @quote.command(pass_context=True, name='by')
@@ -796,10 +847,10 @@ class ServerQuotes:
         If show_all is a trueish value, page through all quotes by the member
         """
         kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
-        records = self._get_quotes(server=ctx.message.server, author=member, **kwargs)
+        records = self._get_quotes(server=ctx.message.server, author=member, link=True, **kwargs)
 
         if not records:
-            await self.bot.say(warning("There aren't any quotes by %s in this server yet." % member))
+            await self.bot.say(warning("There aren't any quotes by %s yet." % member))
             return
 
         if len(records) > 1:
@@ -817,10 +868,10 @@ class ServerQuotes:
         If show_all is a trueish value, page through all quotes by the author
         """
         kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
-        records = self._get_quotes(server=ctx.message.server, author_name=author, **kwargs)
+        records = self._get_quotes(server=ctx.message.server, author_name=author, link=True, **kwargs)
 
         if not records:
-            await self.bot.say(warning("There aren't any quotes by %s in this server yet." % author))
+            await self.bot.say(warning("There aren't any quotes by %s yet." % author))
             return
 
         if len(records) > 1:
@@ -833,20 +884,24 @@ class ServerQuotes:
     @quote.command(pass_context=True, name='me', aliases=['myself', 'self'])
     async def quote_self(self, ctx, show_all: bool = False):
         """
-        Displays quotes by the specified member
+        Displays quotes by the member running the command
 
         If show_all is a trueish value, page through all quotes by the member
         """
         kwargs = {} if show_all else {'sort_direction': SortDirection.RANDOM, 'limit': 1}
-        records = self._get_quotes(server=ctx.message.server, author=ctx.message.author, **kwargs)
+        records = self._get_quotes(server=ctx.message.server, author=ctx.message.author, **kwargs, link=True)
 
         if not records:
-            await self.bot.say(warning("There aren't any quotes by you in this server yet."))
+            await self.bot.say(warning("There aren't any quotes by you yet."))
             return
 
-        embed = self.format_quote_embed(ctx, records[0])
-        await self.bot.say(embed=embed)
+        if len(records) > 1:
+            await self.embed_menu(ctx, records)
+        else:
+            embed = self.format_quote_embed(ctx, records[0])
+            await self.bot.say(embed=embed)
 
+    @mod_or_permissions(administrator=True)
     @quote.command(pass_context=True, name='add', rest_is_raw=True)
     async def quote_add(self, ctx, author: discord.Member, *, quote: str):
         """
@@ -858,9 +913,6 @@ class ServerQuotes:
         To add a quote from a non-member, use [p]quote add-nm
         Or, to add a quote directly from a message, use [p]quote add-msg .
         """
-        if not await self._authorize_add(ctx):
-            return
-
         if quote is not None:
             quote = quote.lstrip()  # remove whitespace
 
@@ -876,6 +928,7 @@ class ServerQuotes:
         else:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
+    @mod_or_permissions(administrator=True)
     @quote.command(pass_context=True, name='add-nm', rest_is_raw=True)
     async def quote_add_nm(self, ctx, author: str, *, quote: str = None):
         """
@@ -888,9 +941,6 @@ class ServerQuotes:
         To add a quote from a member, use [p]quote add .
         Or, to add a quote directly from a message, use [p]quote add-msg .
         """
-        if not await self._authorize_add(ctx):
-            return
-
         if quote is not None:
             quote = quote.lstrip()  # remove whitespace
 
@@ -905,6 +955,7 @@ class ServerQuotes:
         else:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
+    @mod_or_permissions(administrator=True)
     @quote.command(pass_context=True, name='add-msg')
     async def quote_add_msg(self, ctx, message_id: int, channel: discord.Channel = None):
         """
@@ -913,9 +964,6 @@ class ServerQuotes:
         The full text of the message is used. If the message belongs to
         another channel, specify it as the second argument.
         """
-        if not await self._authorize_add(ctx):
-            return
-
         try:
             msg = await self.bot.get_message(channel or ctx.message.channel, str(message_id))
         except discord.errors.NotFound:
@@ -952,6 +1000,7 @@ class ServerQuotes:
         self._delete_quotes(quote_id=match[0]['quote_id'])
         await self.bot.say(okay("Quote #%i deleted.") % num)
 
+    @mod_or_permissions(administrator=True)
     @quote.command(pass_context=True, name='global')
     async def quote_global(self, ctx, num: int, yes_no: bool = True):
         """
@@ -961,8 +1010,6 @@ class ServerQuotes:
 
         if not match:
             await self.bot.say(warning("Couldn't find that quote in this server."))
-            return
-        elif not await self._authorize_global(ctx):
             return
 
         quote_id = match[0]['quote_id']
@@ -1016,6 +1063,75 @@ class ServerQuotes:
         buf = BytesIO(b'\xef\xbb\xbf' + strbuf.getvalue().encode())
         buf.seek(0)
         await self.bot.upload(buf, filename=fname)
+
+    @admin_or_permissions(administrator=True)
+    @quote.command(pass_context=True, name='link')
+    async def quote_link(self, ctx, server_id: int = None):
+        """
+        Links to another server to display or search quotes
+
+        If no server ID is given, lists linked servers.
+        """
+        link_server = self.bot.get_server(str(server_id))
+        params = (int(ctx.message.server.id), server_id)
+
+        if server_id is None:
+            links = self.db.execute('SELECT to_id FROM server_links WHERE from_id = ?', params[:1]).fetchall()
+
+            if not links:
+                await self.bot.say("Not linked to any servers yet.")
+            else:
+                servers = []
+                missing = []
+
+                for row in links:
+                    server_id = str(row['to_id'])
+                    server = self.bot.get_server(server_id)
+
+                    if server:
+                        servers.append(server)
+                    else:
+                        missing.append(server_id)
+
+            msg = [
+                "**Linked to these servers:**",
+                '\n'.join(sorted("{0.name} (ID {0.id})".format(s) for s in servers))
+            ]
+
+            if missing:
+                msg.extend([
+                    "\n**And these server IDs that I'm no longer in:"
+                    '\n'.join(missing)
+                ])
+
+            await self.bot.say('\n'.join(msg))
+            return
+
+        if not (link_server and link_server.get_member(ctx.message.author.id)):
+            await self.bot.say(error("Either I'm not in that server or you aren't."))
+        elif self.db.execute('SELECT * FROM server_links WHERE from_id = ? AND to_id = ?', params).fetchall():
+            await self.bot.say(warning("Already linked to %s." % link_server.name))
+        else:
+            with self.db as con:
+                con.execute('INSERT INTO server_links (from_id, to_id) VALUES (?,?)', params)
+
+            await self.bot.say(okay("Now linked to %s." % link_server.name))
+
+    @admin_or_permissions(administrator=True)
+    @quote.command(pass_context=True, name='unlink')
+    async def quote_unlink(self, ctx, server_id: int):
+        """
+        Unlinks a linked server
+        """
+        link_server = self.bot.get_server(str(server_id))
+        params = (int(ctx.message.server.id), server_id)
+        disp = link_server.name if link_server else ('server ID %i' % server_id)
+
+        if not self.db.execute('SELECT * FROM server_links WHERE from_id = ? AND to_id = ?', params).fetchall():
+            await self.bot.say("Not linked to %s." % disp)
+        else:
+            self.db.execute('DELETE FROM server_links WHERE from_id = ? AND to_id = ?', params)
+            await self.bot.say(okay("Removed link to %s." % disp))
 
     @commands.group(pass_context=True, invoke_without_command=True)
     async def gquote(self, ctx, *, num_or_member: str = None):
@@ -1290,7 +1406,11 @@ class ServerQuotes:
             if record['is_global']:
                 quote_no += ' (#g%i)' % record['quote_id']
         else:
-            quote_no = 'quote #g%i' % record['quote_id']
+            if record['is_global']:
+                quote_no = 'quote #g%i' % record['quote_id']
+            else:
+                quote_no = 'linked quote #%i' % record['server_quote_id']
+
             display_author = record['global_author']
 
             if server:
