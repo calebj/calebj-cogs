@@ -82,6 +82,18 @@ CREATE TRIGGER IF NOT EXISTS quotes_set_sqid AFTER INSERT ON quotes
         WHERE quotes.quote_id = NEW.quote_ID;
   END;
 
+CREATE TRIGGER IF NOT EXISTS quotes_reset_sqid AFTER UPDATE ON quotes
+  WHEN NEW.server_quote_id IS NULL
+  BEGIN
+    REPLACE INTO server_counters (server_id, last_qid)
+        VALUES (NEW.server_id,
+                COALESCE((SELECT last_qid FROM server_counters sc WHERE sc.server_id IS NEW.server_id), 0) + 1);
+
+    UPDATE quotes
+        SET server_quote_id = (SELECT last_qid FROM server_counters WHERE server_counters.server_id IS NEW.server_id)
+        WHERE quotes.quote_id = NEW.quote_ID;
+  END;
+
 CREATE TRIGGER IF NOT EXISTS quotes_set_sqid_noinc AFTER INSERT ON quotes
   WHEN NEW.server_quote_id IS NOT NULL
   BEGIN
@@ -215,7 +227,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.3.0'
+__version__ = '2.3.1'
 
 
 class SortField(Enum):
@@ -1292,7 +1304,10 @@ class ServerQuotes:
             footer += ' | added by ' + record['global_added_by']
 
         embed.set_footer(text=footer, icon_url=record['added_by_avatar_url'] or discord.Embed.Empty)
-        embed.set_author(name=display_author, icon_url=record['author_avatar_url'] or discord.Embed.Empty)
+        embed.set_author(name='By: ' + display_author)
+
+        if record['author_avatar_url']:
+            embed.set_thumbnail(url=record['author_avatar_url'])
 
         if record['image_url']:
             embed.set_image(url=record['image_url'])
