@@ -58,7 +58,7 @@ If my cogs have made your life easier, consider supporting me through [PayPal](h
 * description: Change the header of Red's [p]help command.
 * dice: Wraps the python-dice library. Command is `[p]dice <expression>`.
 * [duel](#duel): Procedurally generated duel with a flexible lexicon system.
-* [embedwiz](#embedwiz): A simple tool to generate and post custom embeds.
+* [embedwiz](#embedwiz): A tool to generate and post custom embeds.
 * galias: Bot-wide command aliases. Only the bot owner can add/remove them.
 * [gallery](#gallery): Automatically clean up comments in content-focused channels.
 * [punish](#punish): Timed text+voice mute with anti-evasion, modlog cases, and more.
@@ -165,9 +165,10 @@ And administrators can use these commands:
 * `[p]unprotect role <role>` : remove a role from the protection list
 
 ### EmbedWiz
-EmbedWiz is a fairly simply cog.
 
-To build an embed, specify the following parameters seperated by a semicolon (`;`):
+Embedwiz can build an embed in two ways: ordered parameters, and keyword parameters.
+
+To use **ordered** parameters, specify the following seperated by a semicolon (`;`):
 * Title: to make a link, put `[Title text](title url)`
 * Color: "none" (default), #ABC123, 0xABC123, "random", "black" or any member of [`discord.Colour`](https://discordpy.readthedocs.io/en/async/api.html#discord.Colour)
 * Footer text
@@ -178,11 +179,22 @@ To build an embed, specify the following parameters seperated by a semicolon (`;
 
 All fields can be left blank. If Discord doesn't like a title link or image URL, it may throw an error.
 
+To use **keyword** parameters, add `-kw` to the beginning of the spec and specify one or more of the following seperated by a semicolon (`;`):
+* `title=` your title or a markdown-format link as described above
+* `url=` a valid URL to assign to the embed title
+* `color=` a color specification (see above)
+* `footer=` the desired footer text
+* `footer_icon=` a valid image URL to use as the footer icon
+* `image=` a valid image URL to use as the embed content image
+* `thumbnail=` a valid image URL to use as the embed thumbnail
+* `timestamp=` an ISO8601 timestamp, UNIX timestamp or 'now'
+* `body=` the embed body text, or "prompt" as described above
+
 By default, author information is included in the embed's header so that it can be edited later using the `embedwiz edit` command. To omit this information, put `-noauthor` in front of the between the command and its parameters. Keep in mind that you won't be able to edit it later if you do this.
 
-An example embed specification:
+An example **ordered** embed specification:
 ```
-[p]embedwiz [Test Embed](https://github.com/calebj/calebj-cogs/);
+[p]embedwiz -noauthor [Test Embed](https://github.com/calebj/calebj-cogs/);
 #2196F3;
 Created by embedwiz;
 https://calebj.io/images/l3icon.png;
@@ -195,7 +207,23 @@ Newlines also work.
 And now for [something completely different](https://www.youtube.com/watch?v=ltmMJntSfQI).
 ```
 
-Which looks like this:
+Or, using **keyword** parameters:
+```
+[p]embedwiz -noauthor -kw title=Test Embed;
+url=https://github.com/calebj/calebj-cogs/;
+color=#2196F3;
+footer=Created by embedwiz;
+footer_icon=https://calebj.io/images/l3icon.png;
+image=https://upload.wikimedia.org/wikipedia/commons/b/bf/Test_card.png;
+thumbnail=https://www.python.org/static/community_logos/python-powered-h-140x182.png;
+body=Example embed body text. Full **markdown** __is__ *supported*. ~~Nothing to see here.~~
+
+Newlines also work.
+
+And now for [something completely different](https://www.youtube.com/watch?v=ltmMJntSfQI).
+```
+
+Both of which looks like this:
 
 ![Test embed](embedwiz/test.png?raw=true)
 

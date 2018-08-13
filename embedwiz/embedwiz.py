@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import random
 import re
 import string
@@ -15,7 +16,7 @@ Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.4.0'
+__version__ = '1.5.0'
 
 # Analytics core
 import zlib, base64
@@ -49,6 +50,9 @@ FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".re
 # End analytics core
 
 
+VALID_FIELDS = {'url', 'title', 'color', 'timestamp', 'footer', 'footer_icon', 'image', 'thumbnail', 'body'}
+
+
 def color_converter(color):
     if type(color) is int:
         if color < 0 or color > 0xffffff:
@@ -70,7 +74,10 @@ def is_valid_color(color):
         return False
 
 
-def is_valid_url(url):
+def is_valid_url(url: str):
+    if not url:
+        return False
+
     token = urlparse(url)
     scheme_ok = token.scheme.lower() in {'http', 'https'}
     netloc_split = token.netloc.split('.')
@@ -78,10 +85,40 @@ def is_valid_url(url):
     return scheme_ok and netloc_ok
 
 
-def extract_md_link(inputstr):
+def extract_md_link(inputstr: str):
     match = re.match(r'^\[([^\]]*)\]\(([^)]*)\)$', inputstr)
     if match:
         return match.groups()
+
+
+def extract_param(inputstr: str):
+    split = re.split(r'(?<!(?<!\\)\\)=', inputstr, 1)
+    if len(split) == 2:
+        return [s.strip() for s in split]
+
+
+def convert_iso8601(input_string):
+    tsre = r"[:]|([-](?!((\d{2}[:]\d{2})|(\d{4}))$))"
+    ts = re.sub(tsre, '', input_string)
+
+    if ts.endswith(('z', 'Z')):
+        ts = ts[:-1] + '+0000'
+
+    if '.' in ts:
+        fmt = "%Y%m%dT%H%M%S.%f%z"
+    else:
+        fmt = "%Y%m%dT%H%M%S%z"
+
+    return datetime.strptime(ts, fmt)
+
+
+def parse_timestamp(inputstr: str):
+    if inputstr.lower() == 'now':
+        return datetime.utcnow()
+    elif inputstr.count('.') <= 1 and inputstr.replace('.', '').isdigit():
+        return datetime.utcfromtimestamp(float(inputstr))
+    else:
+        return convert_iso8601(inputstr)
 
 
 class EmbedWizard:
@@ -99,7 +136,7 @@ class EmbedWizard:
         """
         Posts an embed according to the given specification:
 
-        Title;color;footer text;footer_icon;image_url;thumbnail_url;body text
+        title;color;footer;footer_icon;image;thumbnail;body
 
         All values can be seperated by newlines, spaces, or other whitespace.
         Only the first six semicolons are used, the rest are ignored. To
@@ -109,12 +146,19 @@ class EmbedWizard:
         Color can be a #HEXVAL, "random", or a name that discord.Color knows.
         Options: https://discordpy.readthedocs.io/en/async/api.html#discord.Colour
 
-        All URLs (footer icon, image, thumbnail) can be empty or "none".
+        All URLs (footer_icon, image, thumbnail) can be empty or "none".
 
         Body text can be "prompt" to use your next message as the content.
 
+        Timestamp must be an ISO8601 timestamp, UNIX timestamp or 'now'.
+        An ISO8601 timestamp looks like this: 2017-12-11T01:15:03.449371-0500.
+
         Start the specification with -noauthor to skip the author header.
         Note: only mods, admins and the bot owner can edit anonymous embeds.
+
+        Keyword-based expressions can be built by starting it with '-kw'
+        Each parameter above can be specified as param1=value1;param2=value2;...
+        This method allows two more parameters: url and timestamp (see above).
 
         WARNING: embeds are hidden to anyone with 'link previews' disabled.
         """
@@ -242,48 +286,96 @@ class EmbedWizard:
         author = ctx.message.author
         specification = specification.strip()
         set_author = True
+        use_keywords = False
 
-        if specification.startswith('-noauthor'):
-            if force_author:
-                await self.bot.say(error("You cannot post there using -noauthor."))
+        while specification.startswith(('-noauthor', '-kw')):
+            if specification.startswith('-noauthor'):
+                if force_author:
+                    await self.bot.say(error("You cannot post using -noauthor."))
+                    return
+
+                set_author = False
+                specification = specification[9:]
+
+            if specification.startswith('-kw'):
+                use_keywords = True
+                specification = specification[3:]
+
+            specification = specification.strip()
+
+        maxsplit = 0 if use_keywords else 6
+        split = re.split(r'(?<!(?<!\\)\\);', specification, maxsplit)
+
+        if use_keywords:
+            params = {}
+
+            for param in split:
+                match = extract_param(param)
+
+                if param and not match:
+                    await self.bot.say(error('Invalid key=value expression: `%s`' % param))
+                    return
+                elif not param:
+                    continue
+
+                param, value = match
+                if param in params:
+                    await self.bot.say(error('Duplicate `%s` field!' % param))
+                    return
+                elif param not in VALID_FIELDS:
+                    await self.bot.say(error('Unknown field: `%s`' % param))
+                    return
+
+                params[param] = value
+
+            title = params.get('title', Embed.Empty)
+            url = params.get('url', Embed.Empty)
+            color = params.get('color', Embed.Empty)
+            footer = params.get('footer', Embed.Empty)
+            footer_icon = params.get('footer_icon', Embed.Empty)
+            image = params.get('image', Embed.Empty)
+            thumbnail = params.get('thumbnail', Embed.Empty)
+            body = params.get('body', Embed.Empty)
+            timestamp = params.get('timestamp', Embed.Empty)
+        else:
+            # If user used double backslash to avoid escape, replace with a single one
+            for i, s in enumerate(split[:-1]):
+                if s.endswith(r'\\'):
+                    split[i] = s[:-1]
+
+            nfields = len(split)
+
+            if nfields != 7:
+                op = 'many' if nfields > 7 else 'few'
+                msg = 'Invalid specification: got too {} fields ({}, expected 7)'
+                await self.bot.say(error(msg.format(op, nfields)))
                 return
 
-            set_author = False
-            specification = specification[9:]
+            timestamp = Embed.Empty
+            url = Embed.Empty
+            title, color, footer, footer_icon, image, thumbnail, body = map(str.strip, split)
 
-        # split = specification.split(';', 6)
-        split = re.split(r'(?<!(?<!\\)\\);', specification, 6)
+        if title:
+            url_split = extract_md_link(title)
 
-        # If user used double backslash to avoid escape, replace with a single
-        # backslash, but not in the body field
-        for i, s in enumerate(split[:-1]):
-            if s.endswith(r'\\'):
-                split[i] = s[:-1]
-
-        nfields = len(split)
-
-        if nfields != 7:
-            op = 'many' if nfields > 7 else 'few'
-            msg = 'Invalid specification: got too {} fields ({}, expected 7)'
-            await self.bot.say(error(msg.format(op, nfields)))
-            return
-
-        title, color, ftext, fimage, image, timage, body = map(str.strip, split)
-
-        title_url = extract_md_link(title) or Embed.Empty
-        if title_url:
-            title, title_url = title_url
-            if not is_valid_url(title_url):
-                await self.bot.say(error('Invalid title URL!'))
-                return
+            if url_split:
+                if url:
+                    await self.bot.say(error('Duplicate `url` in markdown format title!'))
+                    return
+                else:
+                    title, url = url
 
         try:
-            color = int(color_converter(color), 16)
+            if color:
+                color = int(color_converter(color), 16)
+            else:
+                color = Embed.Empty
         except ValueError as e:
-            colorstr = color.lower().replace(' ', '_')
+            colorstr = color.lower().strip().replace(' ', '_')
+
             if colorstr == 'random':
                 color = discord.Color(random.randrange(0x1000000))
-            elif colorstr.strip() in ('', 'none'):
+            elif colorstr == 'none':
                 color = Embed.Empty
             elif colorstr.strip() == 'black':
                 color = discord.Color.default()
@@ -293,36 +385,45 @@ class EmbedWizard:
                 await self.bot.say(error(e.args[0]))
                 return
 
-        if ftext.lower() in ('none', ''):
-            ftext = Embed.Empty
+        if url and not is_valid_url(url):
+            await self.bot.say(error('Invalid title URL!'))
+            return
 
-        if fimage.lower() in ('none', ''):
-            fimage = Embed.Empty
-        elif not is_valid_url(fimage):
+        if not footer or footer.lower() in ('none', ''):
+            footer = Embed.Empty
+
+        if not footer_icon or footer_icon.lower() in ('none', ''):
+            footer_icon = Embed.Empty
+        elif not is_valid_url(footer_icon):
             await self.bot.say(error('Invalid footer icon URL!'))
             return
 
-        if image.lower() in ('none', ''):
+        if not image or image.lower() in ('none', ''):
             image = Embed.Empty
         elif not is_valid_url(image):
             await self.bot.say(error('Invalid image URL!'))
             return
 
-        if timage.lower() in ('none', ''):
-            timage = Embed.Empty
-        elif not is_valid_url(timage):
+        if not thumbnail or thumbnail.lower() in ('none', ''):
+            thumbnail = Embed.Empty
+        elif not is_valid_url(thumbnail):
             await self.bot.say(error('Invalid thumbnail URL!'))
             return
 
-        if body.lower() == 'prompt':
-            msg = await self.bot.say('Post the desired content of your embed, '
-                                     ' or "cancel" to cancel. Will wait one'
-                                     ' minute.')
+        if timestamp:
+            try:
+                timestamp = parse_timestamp(timestamp)
+            except ValueError:
+                await self.bot.say(error('Invalid timestamp!'))
+                return
+
+        if body and body.lower() == 'prompt':
+            msg = await self.bot.say('Post the desired content of your embed, or "cancel" to '
+                                     'cancel. Will wait up to one minute.')
             to_delete.append(msg)
 
-            msg = await self.bot.wait_for_message(author=author,
-                                                  channel=ctx.message.channel,
-                                                  timeout=60)
+            msg = await self.bot.wait_for_message(author=author, timeout=60,
+                                                  channel=ctx.message.channel)
             if msg is None:
                 await self.bot.say(error('Timed out waiting for a reply.'))
                 return
@@ -335,7 +436,7 @@ class EmbedWizard:
             else:
                 body = msg.content
 
-        embed = Embed(title=title, color=color, description=body, url=title_url)
+        embed = Embed(title=title, color=color, description=body, url=url, timestamp=timestamp)
 
         if set_author:
             embed.set_author(name='%s (%s)' % (author.display_name, author.id),
@@ -343,10 +444,10 @@ class EmbedWizard:
 
         if image:
             embed.set_image(url=image)
-        if ftext or fimage:
-            embed.set_footer(text=ftext, icon_url=fimage)
-        if timage:
-            embed.set_thumbnail(url=timage)
+        if footer or footer_icon:
+            embed.set_footer(text=footer, icon_url=footer_icon)
+        if thumbnail:
+            embed.set_thumbnail(url=thumbnail)
 
         if return_todelete:
             return embed, to_delete
