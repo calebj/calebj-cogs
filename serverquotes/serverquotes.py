@@ -236,7 +236,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.4.0'
+__version__ = '2.4.1'
 
 
 class SortField(Enum):
@@ -780,7 +780,7 @@ class ServerQuotes:
             await self.quote_list.invoke(ctx)
 
     @commands.cooldown(6, 60, commands.BucketType.channel)
-    @quote.command(pass_context=True, name='list')
+    @quote.command(pass_context=True, no_pm=True, name='list')
     async def quote_list(self, ctx, jump_to_random: bool = False):
         """
         Allows you to page through a list of all quotes
@@ -798,7 +798,7 @@ class ServerQuotes:
             embed = self.format_quote_embed(ctx, records[0])
             await self.bot.say(embed=embed)
 
-    @quote.command(pass_context=True, name='search', rest_is_raw=True)
+    @quote.command(pass_context=True, no_pm=True, name='search', rest_is_raw=True)
     @commands.cooldown(6, 60, commands.BucketType.channel)
     async def quote_search(self, ctx, *, query: str):
         """
@@ -819,7 +819,7 @@ class ServerQuotes:
 
         await self.embed_menu(ctx, records, use_snippet=True)
 
-    @quote.command(pass_context=True, name='show')
+    @quote.command(pass_context=True, no_pm=True, name='show')
     @commands.cooldown(6, 60, commands.BucketType.channel)
     async def quote_show(self, ctx, num: int):
         """
@@ -839,7 +839,7 @@ class ServerQuotes:
             await self.bot.say(embed=embed)
 
     @commands.cooldown(6, 60, commands.BucketType.channel)
-    @quote.command(pass_context=True, name='by')
+    @quote.command(pass_context=True, no_pm=True, name='by')
     async def quote_by(self, ctx, member: discord.Member, show_all: bool = False):
         """
         Displays a random quote by the specified member
@@ -860,7 +860,7 @@ class ServerQuotes:
             await self.bot.say(embed=embed)
 
     @commands.cooldown(6, 60, commands.BucketType.channel)
-    @quote.command(pass_context=True, name='by-nm')
+    @quote.command(pass_context=True, no_pm=True, name='by-nm')
     async def quote_by_nm(self, ctx, author: str, show_all: bool = False):
         """
         Displays a random quote by the specified (non-member) author
@@ -881,7 +881,7 @@ class ServerQuotes:
             await self.bot.say(embed=embed)
 
     @commands.cooldown(6, 60, commands.BucketType.channel)
-    @quote.command(pass_context=True, name='me', aliases=['myself', 'self'])
+    @quote.command(pass_context=True, no_pm=True, name='me', aliases=['myself', 'self'])
     async def quote_self(self, ctx, show_all: bool = False):
         """
         Displays quotes by the member running the command
@@ -902,7 +902,7 @@ class ServerQuotes:
             await self.bot.say(embed=embed)
 
     @mod_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='add', rest_is_raw=True)
+    @quote.command(pass_context=True, no_pm=True, name='add', rest_is_raw=True)
     async def quote_add(self, ctx, author: discord.Member, *, quote: str):
         """
         Adds a member's quote to the server quote database
@@ -929,7 +929,7 @@ class ServerQuotes:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
     @mod_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='add-nm', rest_is_raw=True)
+    @quote.command(pass_context=True, no_pm=True, name='add-nm', rest_is_raw=True)
     async def quote_add_nm(self, ctx, author: str, *, quote: str = None):
         """
         Adds a quote to the server quote database
@@ -956,7 +956,7 @@ class ServerQuotes:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
     @mod_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='add-msg')
+    @quote.command(pass_context=True, no_pm=True, name='add-msg')
     async def quote_add_msg(self, ctx, message_id: int, channel: discord.Channel = None):
         """
         Adds a message to the server quote database
@@ -979,7 +979,7 @@ class ServerQuotes:
         else:
             await self.bot.say(warning("Cannot add a quote with no text, attachments or embed images."))
 
-    @quote.command(pass_context=True, name='remove', aliases=['rm', 'delete'])
+    @quote.command(pass_context=True, no_pm=True, name='remove', aliases=['rm', 'delete'])
     async def quote_remove(self, ctx, num: int):
         """
         Deletes a quote by its number
@@ -1001,7 +1001,7 @@ class ServerQuotes:
         await self.bot.say(okay("Quote #%i deleted.") % num)
 
     @mod_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='global')
+    @quote.command(pass_context=True, no_pm=True, name='global')
     async def quote_global(self, ctx, num: int, yes_no: bool = True):
         """
         Sets whether a quote is accessible in all servers
@@ -1035,7 +1035,7 @@ class ServerQuotes:
             self._update_quotes(quote_id=quote_id, is_global=False)
             await self.bot.say(okay("Quote #%i unpublished.") % num)
 
-    @quote.command(pass_context=True, name='dump', aliases=['csv'])
+    @quote.command(pass_context=True, no_pm=True, name='dump', aliases=['csv'])
     async def quote_dump(self, ctx):
         """
         Uploads all quotes in the server as a CSV
@@ -1065,7 +1065,7 @@ class ServerQuotes:
         await self.bot.upload(buf, filename=fname)
 
     @admin_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='link')
+    @quote.command(pass_context=True, no_pm=True, name='link')
     async def quote_link(self, ctx, server_id: int = None):
         """
         Links to another server to display or search quotes
@@ -1118,7 +1118,7 @@ class ServerQuotes:
             await self.bot.say(okay("Now linked to %s." % link_server.name))
 
     @admin_or_permissions(administrator=True)
-    @quote.command(pass_context=True, name='unlink')
+    @quote.command(pass_context=True, no_pm=True, name='unlink')
     async def quote_unlink(self, ctx, server_id: int):
         """
         Unlinks a linked server
