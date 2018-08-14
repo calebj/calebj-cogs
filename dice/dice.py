@@ -3,7 +3,7 @@ from concurrent.futures import CancelledError, ProcessPoolExecutor
 from discord.ext import commands
 from functools import partial
 from pyparsing import ParseBaseException
-from .utils.chat_formatting import box, warning, pagify
+from .utils.chat_formatting import bold, box, warning, pagify, escape_mass_mentions
 
 try:
     import dice
@@ -49,7 +49,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.2'
+__version__ = '1.2.3'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -173,10 +173,10 @@ class Dice:
                 await self.bot.say(page)
 
         if isinstance(result, int):
-            res = str(result)
+            res = bold(result)
         elif len(result) > 0:
             total = sum(result)
-            res = ', '.join(map(str, result))
+            res = ', '.join(map(bold, result))
 
             if len(res) > 1970:
                 res = '[result set too long to display]'
@@ -185,15 +185,15 @@ class Dice:
         else:
             res = 'Empty result!'
 
-        res = ('🎲 `%s`%s🡪 %s') % (expr, ('\n' if len(res) > 20 else ' '), res)
+        res = '🎲 %s rolled `%s`\n➡ Result: %s' % (ctx.message.author.display_name, expr, res)
 
         if DICE_200 and verbose:
             if len(res) + len(pages[-1]) >= (2000 - 1):
-                await self.bot.say(pages[-1])
+                await self.bot.say(escape_mass_mentions(pages[-1]))
             else:
                 res = pages[-1] + '\n' + res
 
-        await self.bot.say(res)
+        await self.bot.say(escape_mass_mentions(res))
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
