@@ -1,6 +1,7 @@
 # CalebJ Cogs
 #### General, fun and utility modules for [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot/) v2.
 
+[![Say Thanks!](https://img.shields.io/badge/Say%20Thanks-!-1EAEDB.svg)](https://saythanks.io/to/calebj)
 [![Patreon](https://img.shields.io/badge/Support-me!-f96854.svg)](https://www.patreon.com/calebj)
 [![Donate](https://img.shields.io/badge/Paypal-donate-0070ba.svg)](https://paypal.me/calebrj)
 [![discord.py](https://img.shields.io/badge/discord.py-async-blue.svg)](https://github.com/Rapptz/discord.py)
