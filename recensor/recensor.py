@@ -64,7 +64,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.5.0'
+__version__ = '2.5.1'
 
 log = logging.getLogger('red.recensor')
 
@@ -2368,7 +2368,9 @@ class ReCensor:
                                                   channel=ctx.message.channel,
                                                   timeout=5 * 60)
 
-            if msg is None:
+            if self.bot.get_cog("ReCensor") is not self:
+                return
+            elif msg is None:
                 await self.bot.reply('testing for %s stopped due to inactivity.' % _filter.name)
                 break
             elif msg.content.lower().strip('\'"` ') == 'stop test':
@@ -2380,24 +2382,25 @@ class ReCensor:
             if _filter.asciify or (_filter.asciify is None and settings.asciify):
                 content = asciify_string(content)
 
-            match = await self.bot.loop.run_in_executor(self.executor, _filter.predicate, content)
-            wl_msg = 'Your message will not be deleted because it matched and the filter is in whitelist mode.'
-            bl_msg = 'Your message will be deleted because it matched and the filter is in blacklist mode.'
+            match_dict = await self.bot.loop.run_in_executor(self.executor, _filter.predicate, content)
+            match = match_dict.get('match', False)
+            wl_msg = 'Your message will **not** be deleted because it matched and the filter is in whitelist mode.'
+            bl_msg = 'Your message **will** be deleted because it matched and the filter is in blacklist mode.'
+            nm_msg = "Your message will **not** be deleted because it didn't match and the filter is in blacklist mode."
 
             if _filter.override:
                 if match:
                     if _filter.mode:
                         action = wl_msg + ' Since this is an override filter, no further checks will be made.'
                     else:
-                        action = bl_msg + ("Since this is an override filter, it won't matter if it matches any "
+                        action = bl_msg + (" Since this is an override filter, it won't matter if it matches any "
                                            "applicable (non-override) whitelist-mode filters.")
                 else:
                     if _filter.mode:
                         action = ("Your message *might* be deleted because it did not match this whitelist mode filter."
                                   " If it matches another applicable whitelist filter, it will be allowed.")
                     else:
-                        action = ("Your message will not be deleted because it does not match the filter and it is in "
-                                  "blacklist mode.")
+                        action = nm_msg
             elif match and not _filter.mode:
                 action = bl_msg
             elif _filter.mode:
@@ -2407,7 +2410,7 @@ class ReCensor:
                     action = ('Your message *might* be deleted because it did not match this whitelist mode filter. '
                               'If it matches another applicable whitelist filter, it will be allowed.')
             else:
-                action = "Your message will not be deleted because it didn't match and the filter is in blacklist mode."
+                action = nm_msg
 
             await self.bot.say(action)
 
