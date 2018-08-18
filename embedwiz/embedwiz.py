@@ -1,4 +1,14 @@
-from datetime import datetime, timezone
+"""
+"Embed wizard" cog by GrumpiestVulcan
+Commissioned 2018-01-15 by Aeternum Studios
+POC: Aeternum#7967 (#173291729192091649)
+"""
+
+__author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
+__copyright__ = "Copyright 2018, Holocor LLC"
+__version__ = '1.5.1'
+
+from datetime import datetime
 import random
 import re
 import string
@@ -10,13 +20,6 @@ from discord.ext import commands
 
 from .utils import checks
 from .utils.chat_formatting import warning, error, info
-
-"""Embed wizard cog by GrumpiestVulcan
-Commissioned 2018-01-15 by Aeternum Studios (Aeternum#7967/173291729192091649)"""
-
-__author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
-__copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.5.0'
 
 # Analytics core
 import zlib, base64
@@ -140,7 +143,7 @@ class EmbedWizard:
 
         All values can be seperated by newlines, spaces, or other whitespace.
         Only the first six semicolons are used, the rest are ignored. To
-        use semicolons in any of the first six fields, escape it like so: \;
+        use semicolons in any of the first six fields, escape it like so: \\;
         To include a backslash before a semicolon without escaping, do: \\\\;
 
         Color can be a #HEXVAL, "random", or a name that discord.Color knows.
@@ -148,13 +151,13 @@ class EmbedWizard:
 
         All URLs (footer_icon, image, thumbnail) can be empty or "none".
 
-        Body text can be "prompt" to use your next message as the content.
+        Use a body of "prompt" to use your next message as the content.
 
         Timestamp must be an ISO8601 timestamp, UNIX timestamp or 'now'.
         An ISO8601 timestamp looks like this: 2017-12-11T01:15:03.449371-0500.
 
         Start the specification with -noauthor to skip the author header.
-        Note: only mods, admins and the bot owner can edit anonymous embeds.
+        Note: only mods, admins and the bot owner can edit authorless embeds.
 
         Keyword-based expressions can be built by starting it with '-kw'
         Each parameter above can be specified as param1=value1;param2=value2;...
@@ -169,7 +172,7 @@ class EmbedWizard:
 
     @checks.mod_or_permissions(manage_messages=True)
     @embedwiz.command(name='channel', pass_context=True)
-    async def embed_channel(self, ctx, channel: discord.Channel, *, specification):
+    async def embedwiz_channel(self, ctx, channel: discord.Channel, *, specification):
         """
         Posts an embed in another channel according to the spec.
 
@@ -196,7 +199,7 @@ class EmbedWizard:
 
     @checks.mod_or_permissions(manage_messages=True)
     @embedwiz.command(name='delete', pass_context=True, no_pm=True)
-    async def embed_del(self, ctx, *, specification):
+    async def embedwiz_delete(self, ctx, *, specification):
         """
         Posts an embed according to the spec after deleting the original message.
 
@@ -219,10 +222,13 @@ class EmbedWizard:
                 return
 
             for msg in [ctx.message, *to_delete]:
-                await self.bot.delete_message(msg)
+                try:
+                    await self.bot.delete_message(msg)
+                except discord.HTTPException:
+                    continue
 
     @embedwiz.command(name='edit', pass_context=True)
-    async def embed_edit(self, ctx, channel: discord.Channel, message_id: int, *, specification):
+    async def embedwiz_edit(self, ctx, channel: discord.Channel, message_id: int, *, specification):
         """
         Edits an existing embed according to the spec.
 
