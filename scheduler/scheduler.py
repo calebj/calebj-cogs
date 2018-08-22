@@ -14,7 +14,7 @@ from random import randint
 from math import ceil
 from collections import defaultdict
 
-__version__ = '2.0.3'
+__version__ = '2.0.4'
 
 log = logging.getLogger("red.scheduler")
 log.setLevel(logging.INFO)
@@ -180,14 +180,12 @@ class Scheduler:
 
     async def _put_event(self, event, fut=None, offset=None):
         if fut is None:
-            now = int(time.time())
-
             if event.repeat:
-                diff = max(now - event.starttime, 0)
-                fut = ((ceil(diff / event.timedelta) * event.timedelta) +
-                       event.starttime)
+                diff = max(time.time() - event.starttime, 0)
+                fut = ((ceil(diff / event.timedelta) * event.timedelta)
+                       + event.starttime)
             else:
-                fut = now + event.timedelta
+                fut = event.starttime + event.timedelta
 
         if offset:
             fut += offset
@@ -469,7 +467,7 @@ class Scheduler:
         data['channel_id'] = channel.id
         data['reactions'] = []
         fake_message = discord.Message(**data)
-        log.info("Running '{}' in {}".format(name, channel.server))
+        log.info("Running '{0}' in {1.server}/#{1}".format(name, channel))
         self.bot.dispatch('message', fake_message)
 
     def run_coro(self, event, schedtime):
