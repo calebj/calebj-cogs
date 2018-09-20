@@ -1,9 +1,17 @@
-import asyncio
-from concurrent.futures import CancelledError, ProcessPoolExecutor
+from concurrent.futures import CancelledError
 from discord.ext import commands
 from functools import partial
+import os
 from pyparsing import ParseBaseException
+
 from .utils.chat_formatting import bold, box, warning, pagify, escape_mass_mentions
+
+
+# FIXME: once red#1956 is fixed, all OSes can use ProcessPool
+if os.name == 'nt':
+    from concurrent.futures import ThreadPoolExecutor as ExecutorClass
+else:
+    from concurrent.futures import ProcessPoolExecutor as ExecutorClass
 
 try:
     import dice
@@ -49,7 +57,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.3'
+__version__ = '1.2.4'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -78,7 +86,7 @@ class Dice:
     expression parsing for your games!"""
     def __init__(self, bot):
         self.bot = bot
-        self.executor = ProcessPoolExecutor()
+        self.executor = ExecutorClass()
 
         try:
             self.analytics = CogAnalytics(self)
