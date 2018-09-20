@@ -18,7 +18,7 @@ from .utils.dataIO import dataIO
 
 
 __author__ = "GrumpiestVulcan 🖖"
-__version__ = '1.1.0'
+__version__ = '1.2.0'
 
 DATA_DIR = 'data/captcha/'
 CHARS = ''.join(sorted(set(string.digits + string.ascii_uppercase) - set('oO01lI')))
@@ -221,7 +221,11 @@ class ServerConfig:
                 await self.send_challenge(message.author, data)
                 self.cog.save()
         elif message.content == challenge:
-            await self.cog.bot.send_message(message.channel, okay("%s, correct!") % message.author.mention)
+            if message.channel.is_private:
+                await self.cog.bot.send_message(message.channel, okay("Correct!"))
+            else:
+                await self.cog.bot.send_message(message.channel, okay("%s, correct!") % message.author.mention)
+
             await self.approve(message.author, delay=2)
         elif message.content.replace(ZWSP, '') == challenge:
             if message.channel.is_private:
@@ -231,13 +235,18 @@ class ServerConfig:
 
             await self.cog.bot.send_message(message.channel, warning(msg))
 
-    async def approve(self, member: discord.Member, delay=None):
-        await self.cancel(member)
+    async def approve(self, user: discord.User, delay=None):
+        await self.cancel(user)
 
         if delay:
             await asyncio.sleep(delay)
 
-        if not (self.enabled and self.role):
+        if isinstance(user, discord.Member):
+            member = user
+        else:
+            member = self.server.get_member(user.id)
+
+        if not (member and self.enabled and self.role):
             return False
         elif self.role_mode:
             await self.cog.bot.add_roles(member, self.role)
@@ -281,7 +290,7 @@ class ServerConfig:
         self.cog.save()
         return data
 
-    async def send_challenge(self, target: discord.Member, data: dict):
+    async def send_challenge(self, target: discord.User, data: dict):
         if data['use_dm']:
             msg_dest = target
         else:
@@ -295,7 +304,7 @@ class ServerConfig:
 
         msg += ':'
 
-        embed = self.cog._build_embed(target.server, title=msg)
+        embed = self.cog._build_embed(self.server, title=msg)
         challenge_type = ChallengeType(data['chal_type'])
 
         if challenge_type is ChallengeType.WHEEZY and not WheezyCaptcha:
@@ -388,6 +397,10 @@ class ServerConfig:
     def role(self, role):
         assert role.server.id == self.server_id
         self.role_id = role.id
+
+    @property
+    def server(self) -> Optional[discord.Server]:
+        return self.cog.bot.get_server(self.server_id)
 
     @property
     def channel(self) -> Optional[discord.Channel]:
