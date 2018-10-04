@@ -236,7 +236,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.4.1'
+__version__ = '2.4.2'
 
 
 class SortField(Enum):
@@ -1590,7 +1590,7 @@ class ServerQuotes:
         else:
             return False
 
-        check_roles = {r.name for r in user.roles}
+        check_roles = {r.name.lower() for r in user.roles}
 
         if user.id == self.bot.settings.owner:
             return True
