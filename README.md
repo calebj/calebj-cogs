@@ -335,6 +335,12 @@ Each filter in a server has the following settings. To configure or check the va
   - __Overrides__ the server default if set. Specify `inherit` to use the server setting.
 - `attachment`: prepends `{attachment:FILENAME}` to applicable messages when enabled.
   - to prevent spoofing, an extra `{` is prepended when the message starts with `{attachment:`.
+- `msg`: sent when the filter is triggered
+  - Supports `{author}`, `{channel}`, and `{filter}` objects in `format()` template style.
+  - If multiple whitelist filters are checked (ambiguous trigger criteria), this isn't sent.
+- `msg-dm`: whether the trigger message is sent via DMs rather than in the channel.
+- `msg-sec`: controls how long the trigger message remains before being auto-deleted.
+  - Defaults to 5, disabled for DM. Limit is 60 seconds. -1 to disable, 0 for forever.
 
 The cog also supports configuring the following server-wide settings. To configure or check the value of a server setting, use `[p]recensor server SETTINGNAME [newvalue]`.
 - A `priv-exempt` toggle, which makes moderators, admins and the server owner immune from *all* filters by default

@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.6.0'
+__version__ = '2.6.1'
 
 log = logging.getLogger('red.recensor')
 
@@ -939,7 +939,7 @@ class Filter(FilterBase):
     __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'asciify', 'position',
                  'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', 'links', 'attachment_header',
                  'multi_msg_group', 'multi_msg_join', '_predicate', '_compiled', 'mm_white_lastmatch_cache',
-                 'flash_msg', 'flash_sec']
+                 'flash_msg', 'flash_dm', 'flash_sec']
 
     def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
         self.parent = parent
@@ -957,6 +957,7 @@ class Filter(FilterBase):
         self.asciify = data.get('asciify', None)
         self.attachment_header = data.get('attachment_header', False)
         self.flash_msg = data.get('flash_msg', False)
+        self.flash_dm = data.get('flash_dm', False)
         self.flash_sec = data.get('flash_sec', 5)
 
         self.position = POSITION(data.get('position', POSITION.ANYWHERE))
@@ -1099,6 +1100,7 @@ class Filter(FilterBase):
             'position'          : self.position.value,
             'priv_exempt'       : self.priv_exempt,
             'flash_msg'         : self.flash_msg,
+            'flash_dm'          : self.flash_dm,
             'flash_sec'         : self.flash_sec
         }
 
@@ -1125,6 +1127,7 @@ class Filter(FilterBase):
             multi_msg_join=self.multi_msg_join,
             asciify=self.asciify,
             flash_msg=self.flash_msg,
+            flash_dm=self.flash_dm,
             flash_sec=self.flash_sec
         )
 
@@ -1457,7 +1460,13 @@ class ReCensor:
                 flags_val = '\n'.join('`%c` - %s' % (k, FLAGS_DESC[k]) for k in item.flags) or '(none)'
                 embed.add_field(name='Flags', value=flags_val)
 
-                flash_status = ('%ds' % item.flash_sec) if item.flash_sec else 'disabled'
+                if item.flash_sec == -1:
+                    flash_status = 'disabled'
+                elif item.flash_dm:
+                    flash_status = 'via DM'
+                else:
+                    flash_status = ('%ds' % item.flash_sec) if item.flash_sec else 'indefinite'
+
                 embed.add_field(name='Trigger Message (%s)' % flash_status,
                                 value=item.flash_msg or '*(not set)*', inline=False)
 
@@ -2393,9 +2402,43 @@ class ReCensor:
         if msg:
             desc = ':\n\n' + msg
         else:
-            desc = 'not set'
+            desc = 'not set.'
 
-        await self.bot.say('Trigger message for %s is %s %s.' % (_filter.name, adj, desc))
+        await self.bot.say('Trigger message for %s is %s %s' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='msg-dm')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_msg_dm(self, ctx, filter_name: str, msg_dm: bool = None):
+        """
+        Show/set DMing of trigger messages
+
+        Trigger messsages sent via DM will not be auto-deleted.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if type(msg_dm) not in (bool, type(None)):
+            msg_dm = await ctx.command.do_conversion(ctx, bool, msg_dm)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif msg_dm is None:
+            msg_dm = _filter.flash_dm
+            adj = 'currently'
+        elif _filter.flash_dm == msg_dm:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.flash_dm = msg_dm
+            self.save()
+
+        desc = 'enabled' if msg_dm else 'disabled'
+        msg = 'DMing of trigger messages for %s is %s %s.' % (_filter.name, adj, desc)
+
+        await self.bot.say(msg)
 
     @recensor_set.command(pass_context=True, name='msg-sec')
     @checks.mod_or_permissions(manage_messages=True)
@@ -2404,7 +2447,7 @@ class ReCensor:
         Show/set how long the trigger message stays
 
         If set to 0, the trigger message won't be deleted. If -1, the feature is disabled.
-        Maximum value is 60 seconds.
+        Maximum value is 60 seconds. Trigger messsages sent via DM will not be auto-deleted.
         """
         server = ctx.message.server
         settings = self.settings.get(server.id)
@@ -2427,7 +2470,13 @@ class ReCensor:
             self.save()
 
         if seconds > 0:
-            await self.bot.say('Trigger messages for %s will %s be deleted after %ds.' % (_filter.name, adj, seconds))
+            extra = ''
+
+            if _filter.flash_dm:
+                extra = '\n\nNote that trigger messages sent via DM will NOT be auto-deleted.'
+
+            await self.bot.say('Trigger messages for %s are %s set to be auto-deleted after %ds.%s'
+                               % (_filter.name, adj, seconds, extra))
         elif seconds == 0:
             await self.bot.say('Trigger messages for %s will %s remain indefinitely.' % (_filter.name, adj))
         else:
@@ -3251,9 +3300,10 @@ class ReCensor:
         data.update(kwargs)
 
         try:
-            msg = await self.bot.send_message(first_message.channel, filter_hit.flash_msg.format(**data))
+            destination = first_message.author if filter_hit.flash_dm else first_message.channel
+            msg = await self.bot.send_message(destination, filter_hit.flash_msg.format(**data))
 
-            if filter_hit.flash_sec > 0:
+            if filter_hit.flash_sec > 0 and not filter_hit.flash_dm:
                 async def delete_task():
                     await asyncio.sleep(filter_hit.flash_sec)
                     await self.bot.delete_message(msg)
