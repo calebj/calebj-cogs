@@ -18,7 +18,7 @@ from .utils.dataIO import dataIO
 
 
 __author__ = "GrumpiestVulcan 🖖"
-__version__ = '1.2.0'
+__version__ = '1.2.1'
 
 DATA_DIR = 'data/captcha/'
 CHARS = ''.join(sorted(set(string.digits + string.ascii_uppercase) - set('oO01lI')))
@@ -113,7 +113,10 @@ def _timespec_sec(expr):
     else:
         names, length = _find_unit('seconds')
 
-    return float(atoms[0]) * length
+    try:
+        return float(atoms[0]) * length
+    except ValueError:
+        raise BadTimeExpr("invalid value: '%s'" % atoms[0])
 
 
 def _generate_timespec(sec, short=False, micro=False) -> str:
@@ -254,7 +257,7 @@ class ServerConfig:
             await self.cog.bot.remove_roles(member, self.role)
 
     async def challenge(self, member: discord.Member):
-        if not self.enabled:
+        if not (self.enabled and (self.use_dm or self.channel)):
             return False
 
         has_role = discord.utils.get(member.roles, id=self.role_id)
@@ -514,7 +517,7 @@ class Captcha:
         """
         settings = self.settings.get(ctx.message.server.id)
 
-        if not settings and settings.enabled:
+        if not (settings and settings.enabled):
             await self.bot.say('Captcha approval is not enabled in this server.')
             return
         elif not settings.role:
@@ -534,7 +537,7 @@ class Captcha:
         """
         settings = self.settings.get(ctx.message.server.id)
 
-        if not settings and settings.enabled:
+        if not (settings and settings.enabled):
             await self.bot.say('Captcha approval is not enabled in this server.')
             return
         elif not settings.role:
