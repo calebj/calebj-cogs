@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict, OrderedDict
 from datetime import datetime, timedelta
 import discord
@@ -14,7 +15,7 @@ import logging
 import os
 import re
 import time
-from typing import Callable, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Callable, Hashable, Iterable, Iterator, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 import unicodedata
 import urllib.parse
 
@@ -64,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.5.1'
+__version__ = '2.6.0'
 
 log = logging.getLogger('red.recensor')
 
@@ -210,7 +211,7 @@ def check_match_iter(predicate: Callable[[str], Iterator[SRE_Match]], string: st
     return ret_list
 
 
-def check_matches(inputs: Iterable[Tuple[Callable[[str], dict], str, bool]], no_stop: bool = False) -> List[dict]:
+def check_matches(inputs: Iterable[Tuple[str, Callable[[str], dict], str, bool]], no_stop: bool = False) -> List[dict]:
     """
     Call multiple check_match.
 
@@ -220,8 +221,12 @@ def check_matches(inputs: Iterable[Tuple[Callable[[str], dict], str, bool]], no_
     """
     ret_list = []
 
-    for predicate, string, stop_on_match in inputs:
+    for name, predicate, string, stop_on_match in inputs:
         ret = predicate(string)
+
+        if isinstance(ret, dict):
+            ret['name'] = name
+
         ret_list.append(ret)
 
         if (stop_on_match and not no_stop) and (('match' in ret) if type(ret) is dict else len(ret)):
@@ -681,11 +686,10 @@ class ServerConfig(FilterBase):
 
         return True
 
-    async def check_message(self, message: Message, list_cache: dict = None) -> bool:
+    async def check_message(self, message: Message, list_cache: dict = None) -> Tuple[Optional["Filter"], bool]:
         """
         Return true if message should be deleted
         """
-        has_white = False
         content_cache = {}
         checks = []
         checked = []
@@ -713,32 +717,34 @@ class ServerConfig(FilterBase):
 
             stop_on_match = f.override or not f.mode  # short-circuit for override or blacklist mode
             checked.append(f)
-            checks.append((f.predicate, content, stop_on_match))
+            checks.append((f.name, f.predicate, content, stop_on_match))
 
         if not checks:
-            return False
+            return None, False
 
         matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
-        has_white = False
+        whites_checked = []
         match_white = False
 
         for f, match_dict in zip(checked, matches):
             matched = match_dict.get('match', False)
 
             if f.override and matched:  # override black or white
-                return not f.mode
-            elif has_white and not f.mode and not match_white:
-                return True  # Message has whitelist but nothing matched, return immediately
+                return f, not f.mode
+            elif whites_checked and not f.mode and not match_white:
+                white_hit = whites_checked[0] if len(whites_checked) == 1 else None
+                return white_hit, True  # Message has whitelist but nothing matched, return immediately
             elif f.mode and not f.override:  # white for normal only, ORed between all matches
-                has_white = True
+                whites_checked.append(f)
                 match_white |= bool(matched)
             elif matched:  # black regular
-                return True
+                return f, True
 
-        if has_white:
-            return not match_white
-        else:
-            return False
+        if whites_checked:
+            white_hit = whites_checked[0] if len(whites_checked) == 1 else None
+            return white_hit, not match_white
+
+        return None, False
 
     async def debug_message(self, message: Message) -> Tuple[List[Tuple[str, str, Optional[str]]],
                                                              Optional[Tuple[str, bool]]]:
@@ -806,18 +812,18 @@ class ServerConfig(FilterBase):
 
         return results, action
 
-    async def check_sequence(self, messages: Sequence[Message], list_cache: Optional[dict] = None) -> List[Message]:
+    async def check_sequence(self, messages: Sequence[Message],
+                             list_cache: Optional[dict] = None) -> Tuple[Optional["Filter"], Set[Message]]:
         """
         Return a list of messages from the sequence that should be deleted
         """
-        has_white = False
         joined_cache = {}
         content_cache = {}
         checks = []
         checked = []
 
         if not messages:
-            return []
+            return None, set()
         elif list_cache is None:
             list_cache = {}
 
@@ -853,11 +859,11 @@ class ServerConfig(FilterBase):
             # Don't stop immediately on white
             stop_on_match = f.override or not f.mode
             predicate = partial(check_match_iter, f.compiled.finditer) if f.mode else f.predicate
-            checks.append((predicate, content, stop_on_match))
+            checks.append((f.name, predicate, content, stop_on_match))
             checked.append((f, indices))
 
         matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
-        has_white = False
+        whites_checked = []
         matched_message_set = set()
         message_set = set(messages)
         to_delete = message_set.copy()
@@ -902,20 +908,22 @@ class ServerConfig(FilterBase):
                 f.mm_white_lastmatch_cache[wlc_key] = new_wlc.copy()
 
             if f.override and matched_message_set and not f.mode:  # override black
-                return matched_message_set
+                return f, matched_message_set
             elif f.override and f.mode and to_delete:  # override white
-                return to_delete
-            elif has_white and not f.mode and to_delete:
-                return to_delete  # Message has whitelist but we're on a blacklist, return immediately
+                return f, to_delete
+            elif whites_checked and not f.mode and to_delete:
+                white_hit = whites_checked[0] if len(whites_checked) == 1 else None
+                return white_hit, to_delete  # Message has whitelist but we're on a blacklist, return immediately
             elif f.mode and not f.override:  # white for normal only
-                has_white = True
+                whites_checked.append(f)
             elif matched_message_set:  # regular black
-                return matched_message_set
+                return f, matched_message_set
 
-        if has_white:
-            return to_delete
-        else:
-            return ()
+        if whites_checked:
+            white_hit = whites_checked[0] if len(whites_checked) == 1 else None
+            return white_hit, to_delete
+
+        return None, set()
 
     def to_json(self):
         return {
@@ -930,7 +938,8 @@ class ServerConfig(FilterBase):
 class Filter(FilterBase):
     __slots__ = ['parent', 'name', 'pattern', 'flags', 'mode', 'enabled', 'override', 'asciify', 'position',
                  'channels_list', 'roles_list', 'priv_exempt', 'multi_msg', 'links', 'attachment_header',
-                 'multi_msg_group', 'multi_msg_join', '_predicate', '_compiled', 'mm_white_lastmatch_cache']
+                 'multi_msg_group', 'multi_msg_join', '_predicate', '_compiled', 'mm_white_lastmatch_cache',
+                 'flash_msg', 'flash_sec']
 
     def __init__(self, parent: ServerConfig, name: str, *, defer_link=False, **data):
         self.parent = parent
@@ -947,6 +956,8 @@ class Filter(FilterBase):
         self.multi_msg_group = data.get('multi_msg_group', 0)
         self.asciify = data.get('asciify', None)
         self.attachment_header = data.get('attachment_header', False)
+        self.flash_msg = data.get('flash_msg', False)
+        self.flash_sec = data.get('flash_sec', 5)
 
         self.position = POSITION(data.get('position', POSITION.ANYWHERE))
         self.rebuild_predicate()
@@ -1086,7 +1097,9 @@ class Filter(FilterBase):
             'override'          : self.override,
             'pattern'           : self.pattern,
             'position'          : self.position.value,
-            'priv_exempt'       : self.priv_exempt
+            'priv_exempt'       : self.priv_exempt,
+            'flash_msg'         : self.flash_msg,
+            'flash_sec'         : self.flash_sec
         }
 
         for k in ['roles_list', 'channels_list']:
@@ -1110,7 +1123,9 @@ class Filter(FilterBase):
             multi_msg=self.multi_msg,
             multi_msg_group=self.multi_msg_group,
             multi_msg_join=self.multi_msg_join,
-            asciify=self.asciify
+            asciify=self.asciify,
+            flash_msg=self.flash_msg,
+            flash_sec=self.flash_sec
         )
 
         new_kwargs.update(kwargs)
@@ -1441,6 +1456,10 @@ class ReCensor:
             if isinstance(item, Filter):
                 flags_val = '\n'.join('`%c` - %s' % (k, FLAGS_DESC[k]) for k in item.flags) or '(none)'
                 embed.add_field(name='Flags', value=flags_val)
+
+                flash_status = ('%ds' % item.flash_sec) if item.flash_sec else 'disabled'
+                embed.add_field(name='Trigger Message (%s)' % flash_status,
+                                value=item.flash_msg or '*(not set)*', inline=False)
 
             embeds.append(embed)
 
@@ -2333,6 +2352,87 @@ class ReCensor:
 
         await self._list_command_main(ctx, _filter, 'roles_list', operation, *options)
 
+    @recensor_set.command(pass_context=True, name='msg')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_msg(self, ctx, filter_name: str, *, msg: str = None):
+        """
+        Show/set the trigger message template
+
+        Message can't be longer than 512 characters. Set to NONE to disable.
+
+        Valid template entries are:
+        - filter: the Filter object that was matched
+        - author: the author of the matched message
+        - channel: the channel of the matched message
+
+        More template objects may be added later.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if msg == 'NONE':
+            msg = False
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif msg is None:
+            msg = _filter.flash_msg
+            adj = 'currently'
+        elif len(msg) > 512:
+            return await self.bot.send_cmd_help(ctx)
+        elif _filter.flash_msg == msg:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.flash_msg = msg
+            self.save()
+
+        if msg:
+            desc = ':\n\n' + msg
+        else:
+            desc = 'not set'
+
+        await self.bot.say('Trigger message for %s is %s %s.' % (_filter.name, adj, desc))
+
+    @recensor_set.command(pass_context=True, name='msg-sec')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def recensor_set_msg_sec(self, ctx, filter_name: str, seconds: int = None):
+        """
+        Show/set how long the trigger message stays
+
+        If set to 0, the trigger message won't be deleted. If -1, the feature is disabled.
+        Maximum value is 60 seconds.
+        """
+        server = ctx.message.server
+        settings = self.settings.get(server.id)
+        name = filter_name.lower()
+        _filter = settings and settings.get_filter(name)
+
+        if not _filter:
+            await self.bot.say(warning('There is no filter named "%s" in this server.' % name))
+            return
+        elif seconds is None:
+            seconds = _filter.flash_sec
+            adj = 'currently'
+        elif seconds > 60:
+            return await self.bot.send_cmd_help(ctx)
+        elif _filter.flash_sec == seconds:
+            adj = 'already'
+        else:
+            adj = 'now'
+            _filter.flash_sec = seconds
+            self.save()
+
+        if seconds > 0:
+            await self.bot.say('Trigger messages for %s will %s be deleted after %ds.' % (_filter.name, adj, seconds))
+        elif seconds == 0:
+            await self.bot.say('Trigger messages for %s will %s remain indefinitely.' % (_filter.name, adj))
+        else:
+            await self.bot.say('Trigger messages for %s are %s disabled.' % (_filter.name, adj))
+
     @recensor.command(pass_context=True, name='test')
     @checks.mod_or_permissions(manage_messages=True)
     async def recensor_test(self, ctx, filter_name: str = None):
@@ -3143,6 +3243,25 @@ class ReCensor:
 
         return False
 
+    async def post_flash(self, filter_hit: Filter, first_message: Message, **kwargs):
+        if filter_hit.flash_sec == -1 or not filter_hit.flash_msg:
+            return
+
+        data = dict(author=first_message.author, channel=first_message.channel, filter=filter)
+        data.update(kwargs)
+
+        try:
+            msg = await self.bot.send_message(first_message.channel, filter_hit.flash_msg.format(**data))
+
+            if filter_hit.flash_sec > 0:
+                async def delete_task():
+                    await asyncio.sleep(filter_hit.flash_sec)
+                    await self.bot.delete_message(msg)
+
+                self.bot.loop.create_task(delete_task())
+        except Exception:
+            return
+
     # Listeners
 
     async def on_message(self, message, *, _edit=False):
@@ -3167,10 +3286,14 @@ class ReCensor:
 
         self._deleting.add(cache_key)
         list_cache = {}
+        filter_hit, should_delete = await settings.check_message(message, list_cache)
 
-        if await settings.check_message(message, list_cache):
+        if should_delete:
             await self.bot.delete_message(message)
             message_deque.pop(message.id, None)  # deleting a message may make a gap
+
+            if filter_hit:
+                await self.post_flash(filter_hit, message)
 
         await self.handle_seq(self.settings[server.id], message_deque, list_cache)
         self._deleting.discard(cache_key)
@@ -3214,7 +3337,8 @@ class ReCensor:
 
         # Try until the deque is empty or we're out of stuff to delete (cascades)
         while message_deque:
-            to_delete = await settings.check_sequence(list(message_deque.values()), list_cache)
+            filter_hit, to_delete = await settings.check_sequence(list(message_deque.values()), list_cache)
+            to_delete = sorted(to_delete, key=lambda m: m.id)
 
             if not to_delete:
                 break
@@ -3223,6 +3347,9 @@ class ReCensor:
 
             for deleted_message in to_delete:
                 message_deque.pop(deleted_message.id, None)
+
+            if filter_hit:
+                await self.post_flash(filter_hit, to_delete[0], messages=to_delete)
 
         if not all_to_delete:
             return
