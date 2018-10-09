@@ -65,9 +65,9 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.6.1'
+__version__ = '2.6.2'
 
-log = logging.getLogger('red.recensor')
+logger = logging.getLogger('red.recensor')
 
 DATA_PATH = "data/recensor/"
 JSON_PATH = DATA_PATH + "regexen.json"
@@ -1002,6 +1002,8 @@ class Filter(FilterBase):
         try:
             self._compiled = compiled = re.compile(self.pattern, flags_to_int(self.flags))
         except re.error:
+            logger.exception("error building predicate for pattern '%s' and flags %i"
+                             % (self.pattern, self.flags))
             self._predicate = False
             self._compiled = None
             return False, None
@@ -1384,8 +1386,8 @@ class ReCensor:
                      'Attachment Header', 'Multi-message', 'Multi-message join']
 
             params = {
-                'Priv. exempt' : ('yes' if obj.priv_exempt else 'no'),
-                'ASCIIfy'      : ('yes' if obj.asciify else 'no'),
+                'Privilege exempt' : ('yes' if obj.priv_exempt else 'no'),
+                'ASCIIfy'          : ('yes' if obj.asciify else 'no'),
             }
 
             if type(obj) is Filter:
@@ -3285,6 +3287,8 @@ class ReCensor:
 
         if user.id == self.bot.settings.owner:
             return True
+        elif user.id in self.bot.settings.co_owners:
+            return True
         elif discord.utils.get(user.roles, name=admin_role):
             return True
         elif discord.utils.get(user.roles, name=mod_role):
@@ -3310,7 +3314,14 @@ class ReCensor:
 
                 self.bot.loop.create_task(delete_task())
         except Exception:
+            logger.exception('error sending notification for filter %s on message %s/%s/%s by %s' %
+                             (filter_hit.name, first_message.server.id, first_message.channel.id,
+                              first_message.id, first_message.author.id))
             return
+
+        logger.debug('sent notification for filter %s on message %s/%s/%s by %s' %
+                     (filter_hit.name, first_message.server.id, first_message.channel.id,
+                      first_message.id, first_message.author.id))
 
     # Listeners
 
@@ -3339,6 +3350,11 @@ class ReCensor:
         filter_hit, should_delete = await settings.check_message(message, list_cache)
 
         if should_delete:
+            filter_name = filter_hit.name if filter_hit else '<ambiguous>'
+            logger.debug('filter %s hit on message %s/%s/%s by %s (edit=%s)' %
+                         (filter_name, message.server.id, message.channel.id,
+                          message.id, message.author.id, _edit))
+
             await self.bot.delete_message(message)
             message_deque.pop(message.id, None)  # deleting a message may make a gap
 
@@ -3393,6 +3409,12 @@ class ReCensor:
             if not to_delete:
                 break
             else:
+                filter_name = filter_hit.name if filter_hit else '<ambiguous>'
+                first_msg = to_delete[0]
+                message_ids = ', '.join(m.id for m in to_delete)
+                logger.debug('filter %s hit on messages %s/%s/[%s] by %s' %
+                             (filter_name, first_msg.server.id, first_msg.channel.id,
+                              message_ids, first_msg.author.id))
                 all_to_delete.extend(to_delete)
 
             for deleted_message in to_delete:
@@ -3415,18 +3437,18 @@ class ReCensor:
 
 def check_folder():
     if not os.path.exists(DATA_PATH):
-        log.debug('Creating folder: %s' % DATA_PATH)
+        logger.debug('Creating folder: %s' % DATA_PATH)
         os.makedirs(DATA_PATH)
 
 
 def check_file():
     if dataIO.is_valid_json(JSON_PATH) is False:
-        log.debug('Creating json: %s' % JSON_PATH)
+        logger.debug('Creating json: %s' % JSON_PATH)
         dataIO.save_json(JSON_PATH, {'_schema_version': 2})
 
 
 def migrate_data(data):
-    log.debug('Upgrading schema...')
+    logger.debug('Upgrading schema...')
     newdata = {'_schema_version': 2, '_v1_backup': data}
     for sid, sdata in data.items():
         i = 0
