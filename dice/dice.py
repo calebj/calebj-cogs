@@ -57,7 +57,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.4'
+__version__ = '1.2.5'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -180,23 +180,26 @@ class Dice:
             for page in pages[:-1]:
                 await self.bot.say(page)
 
-        if isinstance(result, int):
-            res = bold(result)
-        elif len(result) > 0:
-            total = sum(result)
-            res = ', '.join(map(bold, result))
+        res = '🎲 %s rolled `%s`\n➡ Result: ' % (ctx.message.author.display_name, expr)
 
-            if len(res) > 1970:
-                res = '[result set too long to display]'
+        if isinstance(result, int):
+            res += bold(result)
+        elif len(result) > 0:
+            total = ' (total: %s)' % sum(result)
+            rolls = ', '.join(map(bold, result))
+
+            if len(rolls) > 1024 - (len(res) + len(total)):
+                res += '[result set too long to display]'
+            else:
+                res += rolls
+
             if len(result) > 1:
-                res += ' (total: %s)' % total
+                res += total
         else:
             res = 'Empty result!'
 
-        res = '🎲 %s rolled `%s`\n➡ Result: %s' % (ctx.message.author.display_name, expr, res)
-
         if DICE_200 and verbose:
-            if len(res) + len(pages[-1]) >= (2000 - 1):
+            if len(res) + len(pages[-1]) >= (1024 - 1):
                 await self.bot.say(escape_mass_mentions(pages[-1]))
             else:
                 res = pages[-1] + '\n' + res
