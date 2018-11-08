@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.1.0'
+__version__ = '2.1.1'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -479,7 +479,9 @@ class Punish:
             if data.get('reason'):
                 msg += '\n\nOriginal reason was: ' + data['reason']
 
-            await self._unpunish(user, msg, update=True)
+            if not await self._unpunish(user, msg, update=True):
+                msg += '\n\n(failed to send punishment end notification DM)'
+
             await self.bot.say(msg)
         elif data:  # This shouldn't happen, but just in case
             now = time.time()
@@ -1088,6 +1090,9 @@ class Punish:
         if not hierarchy_allowed:
             await self.bot.say('Permission denied due to role hierarchy.')
             return
+        elif member == server.me:
+            await self.bot.say("You can't punish the bot.")
+            return
 
         if duration and duration.lower() in ['forever', 'inf', 'infinite']:
             duration = None
@@ -1240,7 +1245,7 @@ class Punish:
         if member:
             self.bot.loop.create_task(self._unpunish(member))
 
-    async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None):
+    async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None) -> bool:
         """
         Remove punish role, delete record and task handle
         """
@@ -1295,9 +1300,11 @@ class Punish:
             if reason:
                 msg += "\nReason: %s" % reason
 
-            await self.bot.send_message(member, msg)
-
-            return member_data
+            try:
+                await self.bot.send_message(member, msg)
+                return True
+            except Exception:
+                return False
 
     def _unpunish_data(self, member):
         """Removes punish data entry and cancels any present callback"""
