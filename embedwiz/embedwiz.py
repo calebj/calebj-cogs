@@ -6,7 +6,7 @@ POC: Aeternum#7967 (#173291729192091649)
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2018, Holocor LLC"
-__version__ = '1.5.1'
+__version__ = '1.5.2'
 
 from datetime import datetime
 import random
@@ -369,7 +369,7 @@ class EmbedWizard:
                     await self.bot.say(error('Duplicate `url` in markdown format title!'))
                     return
                 else:
-                    title, url = url
+                    title, url = url_split
 
         try:
             if color:
