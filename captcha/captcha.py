@@ -18,7 +18,7 @@ from .utils.dataIO import dataIO
 
 
 __author__ = "GrumpiestVulcan 🖖"
-__version__ = '1.2.1'
+__version__ = '1.2.2'
 
 DATA_DIR = 'data/captcha/'
 CHARS = ''.join(sorted(set(string.digits + string.ascii_uppercase) - set('oO01lI')))
@@ -951,12 +951,13 @@ class Captcha:
         settings = self.settings.get(server.id)
         extra = None
 
-        if role_mode.lower().startswith('unverified'):
-            role_mode = False
-        elif role_mode.lower().startswith('verified'):
-            role_mode = True
-        else:
-            await self.bot.send_cmd_help(ctx)
+        if role_mode:
+            if role_mode.lower().startswith('unverified'):
+                role_mode = False
+            elif role_mode.lower().startswith('verified'):
+                role_mode = True
+            else:
+                await self.bot.send_cmd_help(ctx)
 
         if (role_mode is not None) and not settings:
             self.settings[server.id] = settings = ServerConfig(self, server.id, role_mode=role_mode)
