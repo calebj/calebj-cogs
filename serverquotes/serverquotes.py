@@ -236,7 +236,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.4.2'
+__version__ = '2.4.3'
 
 
 class SortField(Enum):
@@ -689,7 +689,7 @@ class ServerQuotes:
                 server_id = [server_id]
 
             with self.db as con:
-                params = ','.join('?'*len(server_id))
+                params = ','.join('?' * len(server_id))
                 cur = con.execute("SELECT to_id FROM server_links WHERE from_id IN (%s)" % params, server_id)
                 server_id.extend(r['to_id'] for r in cur.fetchall())
 
@@ -699,21 +699,33 @@ class ServerQuotes:
 
     def _get_quotes(self, sort_field=SortField.QUOTE_ID, sort_direction=SortDirection.ASC, limit=None, **kwargs):
         kwargs = self._normalize_kwargs(kwargs)
+        orig_server_id = kwargs.get("server_id")
+        link = kwargs.pop("link", False)
+        order = []
 
-        if kwargs.pop('link', False):
+        if link:
             kwargs = self._populate_linked_server_ids(kwargs)
 
         where, params = self._build_where(kwargs)
 
         sql = "SELECT * FROM quotes_view_230 " + where
 
+        if link and orig_server_id:
+            order.append("server_id = ? DESC")
+            params.append(orig_server_id)
+
         if sort_direction is SortDirection.RANDOM:
-            sql += " ORDER BY RANDOM() "
+            order.append("RANDOM()")
         elif isinstance(sort_field, SortField) and sort_field is not SortField.NONE:
-            sql += " ORDER BY `%s` " % sort_field.value
+            sort_field_full = "`%s`" % sort_field.value
 
             if isinstance(sort_direction, SortDirection) and sort_direction is not SortDirection.NONE:
-                sql += sort_direction.value
+                sort_field_full += " " + sort_direction.value
+
+            order.append(sort_field_full)
+
+        if order:
+            sql += " ORDER BY " + ", ".join(order)
 
         if limit is not None:
             sql += " LIMIT ?"
@@ -744,7 +756,8 @@ class ServerQuotes:
                 {where} ORDER BY rank DESC LIMIT ? OFFSET ?
             ) AS rt USING(docid)
             JOIN quotes_view_230 ON quote_id = docid
-            WHERE quotes_fts MATCH ? ORDER BY rt.rank DESC
+            WHERE quotes_fts MATCH ?
+            ORDER BY rt.rank DESC
             """.format(where=where))
 
         params.extend((limit, offset, term))
@@ -1080,6 +1093,7 @@ class ServerQuotes:
 
             if not links:
                 await self.bot.say("Not linked to any servers yet.")
+                return
             else:
                 servers = []
                 missing = []
@@ -1100,7 +1114,7 @@ class ServerQuotes:
 
             if missing:
                 msg.extend([
-                    "\n**And these server IDs that I'm no longer in:"
+                    "\n**I'm no longer in these formerly linked servers:**",
                     '\n'.join(missing)
                 ])
 
