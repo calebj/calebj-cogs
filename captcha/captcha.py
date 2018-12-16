@@ -18,7 +18,7 @@ from .utils.dataIO import dataIO
 
 
 __author__ = "GrumpiestVulcan 🖖"
-__version__ = '1.2.2'
+__version__ = '1.2.3'
 
 DATA_DIR = 'data/captcha/'
 CHARS = ''.join(sorted(set(string.digits + string.ascii_uppercase) - set('oO01lI')))
@@ -166,6 +166,9 @@ class ServerConfig:
         self.server_id = server_id
         self._handles = {}
 
+        # prevents duplicate challenges from races in role add/remove
+        self._pending_ids = set()
+
         # Generated challenge length
         self.challenge_length = data.get('challenge_length', 8)
         # Captcha generator (plain, image, or wheezy)
@@ -198,10 +201,20 @@ class ServerConfig:
         if member.id in self._handles:
             self._handles.pop(member.id).cancel()
 
-        data = self.pending.pop(member.id)
+        data = self.pending.pop(member.id, {})
 
         if data.get('use_dm'):
             self.cog.pending_dms.get(member.id, set()).discard(self.server_id)
+
+        try:
+            channel = self.bot.get_channel(data.get('channel_id'))
+            message_id = data.get('message_id')
+
+            if channel and message_id:
+                message = await self.bot.get_message(channel, )
+                await self.bot.delete_message(message)
+        except Exception:
+            pass  # ignore error if channel or message couldn't be found/deleted
 
         self.cog.save()
         return True
@@ -239,6 +252,17 @@ class ServerConfig:
             await self.cog.bot.send_message(message.channel, warning(msg))
 
     async def approve(self, user: discord.User, delay=None):
+        # wrap for race prevention
+        if user.id in self._pending_ids:
+            return False
+
+        try:
+            self._pending_ids.add(user.id)
+            return await self._approve(user, delay=delay)
+        finally:
+            self._pending_ids.discard(user.id)
+
+    async def _approve(self, user: discord.User, delay=None):
         await self.cancel(user)
 
         if delay:
@@ -257,7 +281,20 @@ class ServerConfig:
             await self.cog.bot.remove_roles(member, self.role)
 
     async def challenge(self, member: discord.Member):
+        # wrap for race prevention
+        if member.id in self._pending_ids:
+            return False
+
+        try:
+            self._pending_ids.add(member.id)
+            return await self._challenge(member)
+        finally:
+            self._pending_ids.discard(member.id)
+
+    async def _challenge(self, member: discord.Member):
         if not (self.enabled and (self.use_dm or self.channel)):
+            return False
+        elif member.id in self.pending:
             return False
 
         has_role = discord.utils.get(member.roles, id=self.role_id)
@@ -281,7 +318,7 @@ class ServerConfig:
             'chal_type'  : self.challenge_type.value
         }
 
-        await self.send_challenge(member, data)
+        data = await self.send_challenge(member, data)
 
         if self.kick_timeout:
             self.schedule_kick(self.kick_timeout, member)
@@ -294,7 +331,9 @@ class ServerConfig:
         return data
 
     async def send_challenge(self, target: discord.User, data: dict):
-        if data['use_dm']:
+        use_dm = data['use_dm']
+
+        if use_dm:
             msg_dest = target
         else:
             msg_dest = target.server.get_channel(data['channel_id'])
@@ -336,6 +375,10 @@ class ServerConfig:
             sent = await self.cog.bot.send_message(msg_dest, content, embed=embed)
 
         data['message_id'] = sent.id
+
+        if use_dm:
+            data['channel_id'] = sent.channel.id
+
         return data
 
     def generate_code(self):
@@ -999,7 +1042,7 @@ class Captcha:
         server = before.server
         settings = self.settings.get(server.id)
 
-        if before.bot and before.roles == after.roles:
+        if before.bot or before.roles == after.roles:
             return
         elif not (settings and settings.enabled and settings.role):
             return
