@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.2.0'
+__version__ = '2.2.2'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -125,8 +125,11 @@ def _timespec_sec(expr):
         raise BadTimeExpr("invalid value: '%s'" % atoms[0])
 
 
-def _generate_timespec(sec, short=False, micro=False):
+def _generate_timespec(sec: int, short=False, micro=False) -> str:
     timespec = []
+    sec = int(sec)
+    neg = sec < 0
+    sec = abs(sec)
 
     for names, length in UNIT_TABLE:
         n, sec = divmod(sec, length)
@@ -138,18 +141,27 @@ def _generate_timespec(sec, short=False, micro=False):
                 s = '%d%s' % (n, names[1])
             else:
                 s = '%d %s' % (n, names[0])
-            if n <= 1:
+
+            if n <= 1 and not (micro and names[2] == 's'):
                 s = s.rstrip('s')
+
             timespec.append(s)
 
     if len(timespec) > 1:
         if micro:
-            return ''.join(timespec)
+            spec = ''.join(timespec)
 
         segments = timespec[:-1], timespec[-1:]
-        return ' and '.join(', '.join(x) for x in segments)
+        spec = ' and '.join(', '.join(x) for x in segments)
+    elif timespec:
+        spec = timespec[0]
+    else:
+        return '0'
 
-    return timespec[0]
+    if neg:
+        spec += ' ago'
+
+    return spec
 
 
 def format_list(*items, join='and', delim=', '):
@@ -1013,25 +1025,26 @@ class Punish:
 
         self.save()
 
-        try:
-            while self == self.bot.get_cog('Punish'):
-                while True:
-                    async with self.queue_lock:
-                        if not await self.process_queue_event():
-                            break
+        while True:
+            try:
+                async with self.queue_lock:
+                    while await self.process_queue_event():
+                        pass
 
                 await asyncio.sleep(5)
 
-        except asyncio.CancelledError:
-            pass
-        finally:
-            log.debug('queue manager dying')
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
 
-            while not self.queue.empty():
-                self.queue.get_nowait()
+        log.debug('queue manager dying')
 
-            for fut in self.pending.values():
-                fut.cancel()
+        while not self.queue.empty():
+            self.queue.get_nowait()
+
+        for fut in self.pending.values():
+            fut.cancel()
 
     async def cancel_queue_event(self, *args) -> bool:
         if args in self.pending:
@@ -1082,19 +1095,20 @@ class Punish:
         diff = next_time - now
 
         if diff < 0:
-            self.execute_queue_event(*args)
+            if self.execute_queue_event(*args):
+                return
         elif diff < QUEUE_TIME_CUTOFF:
             self.pending[args] = self.bot.loop.call_later(diff, self.execute_queue_event, *args)
             return True
-        else:
-            await self.queue.put(item)
-            return False
 
-    def execute_queue_event(self, *args):
+        await self.queue.put(item)
+        return False
+
+    def execute_queue_event(self, *args) -> bool:
         self.enqueued.discard(args)
 
         try:
-            self.execute_unpunish(*args)
+            return self.execute_unpunish(*args)
         except Exception:
             log.exception("failed to execute scheduled event")
 
@@ -1263,16 +1277,20 @@ class Punish:
 
         await self.put_queue_event(until, member.server.id, member.id)
 
-    def execute_unpunish(self, server_id, member_id):
+    def execute_unpunish(self, server_id, member_id) -> bool:
         server = self.bot.get_server(server_id)
 
         if not server:
-            return
+            return False
 
         member = server.get_member(member_id)
 
         if member:
             self.bot.loop.create_task(self._unpunish(member))
+            return True
+        else:
+            self.bot.loop.create_task(self.bot.request_offline_members(server))
+            return False
 
     async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None, quiet=False) -> bool:
         """
