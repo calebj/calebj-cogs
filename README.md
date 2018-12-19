@@ -336,7 +336,7 @@ Each filter in a server has the following settings. To configure or check the va
 - `attachment`: prepends `{attachment:FILENAME}` to applicable messages when enabled.
   - to prevent spoofing, an extra `{` is prepended when the message starts with `{attachment:`.
 - `msg`: sent when the filter is triggered
-  - Supports `{author}`, `{channel}`, and `{filter}` objects in `format()` template style.
+  - Supports `{author}`, `{channel}`, `{filter}` and `{match}` objects in `format()` template style.
   - If multiple whitelist filters are checked (ambiguous trigger criteria), this isn't sent.
 - `msg-dm`: whether the trigger message is sent via DMs rather than in the channel.
 - `msg-sec`: controls how long the trigger message remains before being auto-deleted.

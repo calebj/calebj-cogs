@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.6.4'
+__version__ = '2.7.0'
 
 logger = logging.getLogger('red.recensor')
 
@@ -160,9 +160,10 @@ def check_match(predicate: Callable[[str], Optional[SRE_Match]], string: str) ->
 
         if groups:
             ret.update({
-                'group_spans' : tuple(match.span(i + 1) for i in range(len(groups))),
-                'groupdict'   : match.groupdict(),
-                'groups'      : groups
+                'group_matches' : tuple(match.group(i + 1) for i in range(len(groups))),
+                'group_spans'   : tuple(match.span(i + 1) for i in range(len(groups))),
+                'groupdict'     : match.groupdict(),
+                'groups'        : groups
             })
 
     return ret
@@ -686,9 +687,11 @@ class ServerConfig(FilterBase):
 
         return True
 
-    async def check_message(self, message: Message, list_cache: dict = None) -> Tuple[Optional["Filter"], bool]:
+    async def check_message(self, message: Message, list_cache: dict = None
+                            ) -> Tuple[Optional["Filter"], bool, Optional[str]]:
         """
-        Return true if message should be deleted
+        Return the matched filter (or None if no match), a boolean indicating whether to
+        delete `message`, and the substring of the match (None if no match or whitelist).
         """
         content_cache = {}
         checks = []
@@ -720,31 +723,32 @@ class ServerConfig(FilterBase):
             checks.append((f.name, f.predicate, content, stop_on_match))
 
         if not checks:
-            return None, False
+            return None, False, None
 
         matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
         whites_checked = []
         match_white = False
 
         for f, match_dict in zip(checked, matches):
-            matched = match_dict.get('match', False)
+            matched = match_dict.get('match')
 
             if f.override and matched:  # override black or white
-                return f, not f.mode
+                return f, not f.mode, (None if f.mode else matched)
             elif whites_checked and not f.mode and not match_white:
                 white_hit = whites_checked[0] if len(whites_checked) == 1 else None
-                return white_hit, True  # Message has whitelist but nothing matched, return immediately
+                # Message has whitelist but nothing matched, return immediately
+                return white_hit, True, None
             elif f.mode and not f.override:  # white for normal only, ORed between all matches
                 whites_checked.append(f)
                 match_white |= bool(matched)
             elif matched:  # black regular
-                return f, True
+                return f, True, matched
 
         if whites_checked:
             white_hit = whites_checked[0] if len(whites_checked) == 1 else None
-            return white_hit, not match_white
+            return white_hit, not match_white, None
 
-        return None, False
+        return None, False, None
 
     async def debug_message(self, message: Message) -> Tuple[List[Tuple[str, str, Optional[str]]],
                                                              Optional[Tuple[str, bool]]]:
@@ -813,9 +817,11 @@ class ServerConfig(FilterBase):
         return results, action
 
     async def check_sequence(self, messages: Sequence[Message],
-                             list_cache: Optional[dict] = None) -> Tuple[Optional["Filter"], Set[Message]]:
+                             list_cache: Optional[dict] = None
+                             ) -> Tuple[Optional["Filter"], Set[Message], Optional[str]]:
         """
-        Return a list of messages from the sequence that should be deleted
+        Return the matched filter (or None if no match), a set of messages that should be deleted, and
+        the matching span from the sequence `messages` (None if no match or whitelist).
         """
         joined_cache = {}
         content_cache = {}
@@ -823,7 +829,7 @@ class ServerConfig(FilterBase):
         checked = []
 
         if not messages:
-            return None, set()
+            return None, set(), None
         elif list_cache is None:
             list_cache = {}
 
@@ -860,7 +866,7 @@ class ServerConfig(FilterBase):
             stop_on_match = f.override or not f.mode
             predicate = partial(check_match_iter, f.compiled.finditer) if f.mode else f.predicate
             checks.append((f.name, predicate, content, stop_on_match))
-            checked.append((f, indices))
+            checked.append((f, indices, content))
 
         matches = await self.cog.bot.loop.run_in_executor(self.cog.executor, check_matches, checks)
         whites_checked = []
@@ -868,8 +874,9 @@ class ServerConfig(FilterBase):
         message_set = set(messages)
         to_delete = message_set.copy()
         new_wlc = []
+        spans = []
 
-        for (f, indices), match_obj in zip(checked, matches):
+        for (f, indices, content), match_obj in zip(checked, matches):
             if type(match_obj) is list:
                 matches = match_obj
             else:
@@ -877,6 +884,7 @@ class ServerConfig(FilterBase):
 
             matched_message_set.clear()
             new_wlc.clear()
+            spans.clear()
 
             for match in matches:
                 if 'match' not in match:
@@ -888,6 +896,8 @@ class ServerConfig(FilterBase):
                     match = match['group_spans'][f.multi_msg_group - 1]
                 else:
                     match = match['span']
+
+                spans.append(match)
 
                 match_messages = sequence_from_indices(messages, indices, match)
                 matched_message_set.update(match_messages)
@@ -907,23 +917,31 @@ class ServerConfig(FilterBase):
 
                 f.mm_white_lastmatch_cache[wlc_key] = new_wlc.copy()
 
+            if spans:
+                start = spans[0][0]
+                end = spans[-1][1]
+                match_substr = content[start:end]
+            else:
+                match_substr = None
+
             if f.override and matched_message_set and not f.mode:  # override black
-                return f, matched_message_set
+                return f, matched_message_set, match_substr
             elif f.override and f.mode and to_delete:  # override white
-                return f, to_delete
+                return f, to_delete, None
             elif whites_checked and not f.mode and to_delete:
                 white_hit = whites_checked[0] if len(whites_checked) == 1 else None
-                return white_hit, to_delete  # Message has whitelist but we're on a blacklist, return immediately
+                # Message has whitelist but we're on a blacklist, return immediately
+                return white_hit, to_delete, None
             elif f.mode and not f.override:  # white for normal only
                 whites_checked.append(f)
             elif matched_message_set:  # regular black
-                return f, matched_message_set
+                return f, matched_message_set, match_substr
 
         if whites_checked:
             white_hit = whites_checked[0] if len(whites_checked) == 1 else None
-            return white_hit, to_delete
+            return white_hit, to_delete, None
 
-        return None, set()
+        return None, set(), None
 
     def to_json(self):
         return {
@@ -3302,7 +3320,13 @@ class ReCensor:
         if filter_hit.flash_sec == -1 or not filter_hit.flash_msg:
             return
 
-        data = dict(author=first_message.author, channel=first_message.channel, filter=filter)
+        data = dict(
+            author=first_message.author,
+            channel=first_message.channel,
+            filter=filter,
+            messages=[],
+            match=None
+        )
         data.update(kwargs)
 
         try:
@@ -3349,7 +3373,7 @@ class ReCensor:
 
         self._deleting.add(cache_key)
         list_cache = {}
-        filter_hit, should_delete = await settings.check_message(message, list_cache)
+        filter_hit, should_delete, match_substr = await settings.check_message(message, list_cache)
 
         if should_delete:
             filter_name = filter_hit.name if filter_hit else '<ambiguous>'
@@ -3358,12 +3382,15 @@ class ReCensor:
                           message.id, message.author.id, _edit))
 
             await self.bot.delete_message(message)
-            message_deque.pop(message.id, None)  # deleting a message may make a gap
+            # deleting a message may make a gap
+            popped = message_deque.pop(message.id, None)
 
             if filter_hit:
-                await self.post_flash(filter_hit, message)
+                await self.post_flash(filter_hit, message, match=match_substr)
 
-        await self.handle_seq(self.settings[server.id], message_deque, list_cache)
+        if should_delete and popped:
+            await self.handle_seq(self.settings[server.id], message_deque, list_cache)
+
         self._deleting.discard(cache_key)
 
     async def on_message_edit(self, old_message, new_message):
@@ -3380,14 +3407,15 @@ class ReCensor:
 
         message_deque = self._message_cache[cache_key]
         self.cleanup_deque(message_deque)
-        message_deque.pop(message.id, None)
+        popped = message_deque.pop(message.id, None)
 
         if not message.channel.permissions_for(server.me).manage_messages:
             return
 
-        self._deleting.add(cache_key)
-        await self.handle_seq(self.settings[server.id], message_deque)
-        self._deleting.discard(cache_key)
+        if popped:
+            self._deleting.add(cache_key)
+            await self.handle_seq(self.settings[server.id], message_deque)
+            self._deleting.discard(cache_key)
 
     @staticmethod
     def cleanup_deque(message_deque: BoundedOrderedDict):
@@ -3403,9 +3431,12 @@ class ReCensor:
                          list_cache: Optional[dict] = None):
         all_to_delete = []
 
+        if list_cache is None:
+            list_cache = {}
+
         # Try until the deque is empty or we're out of stuff to delete (cascades)
         while message_deque:
-            filter_hit, to_delete = await settings.check_sequence(list(message_deque.values()), list_cache)
+            filter_hit, to_delete, match_substr = await settings.check_sequence(message_deque.values(), list_cache)
             to_delete = sorted(to_delete, key=lambda m: m.id)
 
             if not to_delete:
@@ -3423,13 +3454,11 @@ class ReCensor:
                 message_deque.pop(deleted_message.id, None)
 
             if filter_hit:
-                await self.post_flash(filter_hit, to_delete[0], messages=to_delete)
+                await self.post_flash(filter_hit, to_delete[0], match=match_substr, messages=to_delete)
 
-        if not all_to_delete:
-            return
-        elif len(all_to_delete) == 1:
+        if len(all_to_delete) == 1:
             await self.bot.delete_message(all_to_delete[0])
-        else:
+        elif all_to_delete:
             await self.bot.delete_messages(all_to_delete)
 
     async def on_command(self, command, ctx):
