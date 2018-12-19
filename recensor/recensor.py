@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.6.3'
+__version__ = '2.6.4'
 
 logger = logging.getLogger('red.recensor')
 
@@ -3291,7 +3291,7 @@ class ReCensor:
             return True
 
         if hasattr(user, 'roles'):
-            elif discord.utils.get(user.roles, name=admin_role):
+            if discord.utils.get(user.roles, name=admin_role):
                 return True
             elif discord.utils.get(user.roles, name=mod_role):
                 return True
