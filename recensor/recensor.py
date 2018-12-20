@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.7.0'
+__version__ = '2.7.1'
 
 logger = logging.getLogger('red.recensor')
 
@@ -279,6 +279,28 @@ def sequence_from_indices(sequence: Sequence[T], indices: Sequence[int], keys: T
         last_index = index
 
     return ret
+
+
+def ellipsize(string: str, to_length: int = None, by: int = None) -> str:
+    if to_length is not None and by is not None:
+        raise ValueError("conflicting length arguments")
+    elif to_length is None and by is None:
+        raise ValueError("missing length argument")
+
+    strlen = len(string)
+
+    if by is not None:
+        to_length = strlen - by
+    else:
+        by = strlen - to_length
+
+    if strlen <= to_length:
+        return string
+
+    pos1 = (strlen // 2) - 1
+    pos2 = pos1 + 3
+
+    return string[:pos1] + "..." + string[pos2:]
 
 
 def asciify_string(string: str) -> str:
@@ -2393,6 +2415,7 @@ class ReCensor:
         - filter: the Filter object that was matched
         - author: the author of the matched message
         - channel: the channel of the matched message
+        - match: the matched substring, for black-mode filters
 
         More template objects may be added later.
         """
@@ -3329,9 +3352,17 @@ class ReCensor:
         )
         data.update(kwargs)
 
+        # check if message is too long, if so then ellipsize match
+        msg = filter_hit.flash_msg.format(**data)
+
+        if len(msg) > 2000:
+            over = len(msg) - 2000
+            data["match"] = ellipsize(data["match"], by=over)
+            msg = filter_hit.flash_msg.format(**data)
+
         try:
             destination = first_message.author if filter_hit.flash_dm else first_message.channel
-            msg = await self.bot.send_message(destination, filter_hit.flash_msg.format(**data))
+            msg = await self.bot.send_message(destination, msg)
 
             if filter_hit.flash_sec > 0 and not filter_hit.flash_dm:
                 async def delete_task():
