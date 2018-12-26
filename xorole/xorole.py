@@ -11,7 +11,7 @@ Commissioned 2017-07-27 by QuietRepentance (Quiet#8251) for discord.gg/pokken"""
 
 __author__ = "Caleb Johnson <me@calebj.io> (calebj#0001)"
 __copyright__ = "Copyright 2017, Holocor LLC"
-__version__ = '1.2.0'
+__version__ = '1.3.0'
 
 JSON = 'data/xorole.json'
 
@@ -50,17 +50,22 @@ FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".re
 class XORoleException(Exception):
     pass
 
+
 class RolesetAlreadyExists(XORoleException):
     pass
+
 
 class RolesetNotFound(XORoleException):
     pass
 
+
 class NoRolesetsFound(XORoleException):
     pass
 
+
 class RoleNotFound(XORoleException):
     pass
+
 
 class PermissionsError(XORoleException):
     pass
@@ -215,6 +220,14 @@ class XORole:
                            'for me to do so.')
                 raise PermissionsError('Error updating roles: ' + err)
 
+    async def delete_messages_after(self, messages: list, delay: int):
+        await asyncio.sleep(max(0, delay))
+
+        if len(messages) == 1:
+            await self.bot.delete_message(messages[0])
+        elif messages:
+            await self.bot.delete_messages(messages)
+
     @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     async def xorole(self, ctx, *, role: str = None):
         if ctx.invoked_subcommand is None:
@@ -227,6 +240,7 @@ class XORole:
     async def xorole_list(self, ctx, *, roleset: str = None):
         "Shows the available roles to in the server or a specific roleset."
         server = ctx.message.server
+
         try:
             if roleset:
                 name, roles = self.get_roleset(server, roleset)
@@ -242,6 +256,7 @@ class XORole:
                 roles = sorted(filter(None, roles))
 
                 lines.append(k + ':')
+
                 if roles:
                     lines.extend((' - %s' % rn) for rn in roles)
                 else:
@@ -265,6 +280,7 @@ class XORole:
         "Assigns a role to you, removing any others in the same roleset."
         server = ctx.message.server
         member = ctx.message.author
+        messages = {ctx.message}
 
         try:
             role = self.find_role(server, role)
@@ -272,7 +288,8 @@ class XORole:
             existing = self.get_roleset_memberships(member, roleset)
 
             if role in member.roles and len(existing) == 1:
-                await self.bot.say('You already have that role; nothing to do.')
+                m = await self.bot.say('You already have that role; nothing to do.')
+                messages.add(m)
                 return
 
             to_add = [role]
@@ -280,23 +297,33 @@ class XORole:
 
             await self.role_add_remove(member, to_add, to_remove)
 
-            await self.bot.say("Role in roleset %s switched to %s."
-                               % (roleset, role.name))
+            m = await self.bot.say("Role in roleset %s switched to %s."
+                                   % (roleset, role.name))
+            messages.add(m)
 
         except XORoleException as e:
-            await self.bot.say(warning(*e.args))
+            m = await self.bot.say(warning(*e.args))
+            messages.add(m)
+        finally:
+            delay = self.settings.get(server.id, {}).get('AUTODELETE', 0)
+
+            if delay:
+                coro = self.delete_messages_after(messages, delay)
+                self.bot.loop.create_task(coro)
 
     @xorole.command(name='remove', pass_context=True)
     async def xorole_remove(self, ctx, *, role_or_roleset: str):
         "Removes a specific role or any in a roleset from you."
         server = ctx.message.server
         member = ctx.message.author
+        messages = {ctx.message}
 
         try:
             role = self.find_role(server, role_or_roleset, notfound_ok=True)
             if role:
                 if role not in member.roles:
-                    await self.bot.say("You don't have that role; nothing to do.")
+                    m = await self.bot.say("You don't have that role; nothing to do.")
+                    messages.add(m)
                     return
 
                 to_remove = [role]
@@ -308,21 +335,33 @@ class XORole:
                 await self.role_add_remove(member, to_remove=to_remove)
                 plural = 'roles' if len(to_remove) > 1 else 'role'
                 rlist = ', '.join(r.name for r in to_remove)
-                await self.bot.say('Removed the %s: %s.' % (plural, rlist))
+                m = await self.bot.say('Removed the %s: %s.' % (plural, rlist))
             else:
-                await self.bot.say("You don't belong to any roles in the %s "
-                                   "roleset." % role_or_roleset)
+                m = await self.bot.say("You don't belong to any roles in the %s "
+                                       "roleset." % role_or_roleset)
+
+            messages.add(m)
 
         except XORoleException as e:
-            await self.bot.say(warning(*e.args))
+            m = await self.bot.say(warning(*e.args))
+            messages.add(m)
+        finally:
+            delay = self.settings.get(server.id, {}).get('AUTODELETE', 0)
+
+            if delay:
+                coro = self.delete_messages_after(messages, delay)
+                self.bot.loop.create_task(coro)
 
     @xorole.command(name='toggle', pass_context=True)
     async def xorole_toggle(self, ctx, *, role_or_roleset: str):
         "Toggles a role in a single-role roleset on or off, or between two roles in a roleset."
         server = ctx.message.server
         member = ctx.message.author
+        messages = {ctx.message}
+
         try:
             role = self.find_role(server, role_or_roleset, notfound_ok=True)
+
             if role:
                 role_or_roleset = self.roleset_of_role(role)
 
@@ -331,12 +370,14 @@ class XORole:
             roles = list(filter(None, roles))
 
             if not 0 < len(roles) <= 2:
-                await self.bot.say(warning("Cannot toggle within the '%s' "
-                                           "roleset." % roleset))
+                m = await self.bot.say(warning("Cannot toggle within the '%s' "
+                                               "roleset." % roleset))
+                messages.add(m)
                 return
 
             if len(roles) == 1:
                 single_role = roles[0]
+
                 if single_role in member.roles:
                     to_add = []
                     to_remove = [single_role]
@@ -346,25 +387,37 @@ class XORole:
 
             elif len(roles) == 2:
                 to_remove = self.get_roleset_memberships(member, roleset)
+
                 if len(to_remove) != 1:
-                    await self.bot.say(warning("You must have one role in %s "
-                                               "to toggle it." % roleset))
+                    m = await self.bot.say(warning("You must have one role in %s "
+                                                   "to toggle it." % roleset))
+                    messages.add(m)
                     return
 
                 to_add = roles.copy()
                 to_add.remove(to_remove[0])
 
             await self.role_add_remove(member, to_add, to_remove)
+
             if to_add and to_remove:
-                await self.bot.say('Toggled from %s to %s.'
-                                   % (to_remove[0], to_add[0]))
+                m = await self.bot.say('Toggled from %s to %s.'
+                                       % (to_remove[0], to_add[0]))
             elif to_add:
-                await self.bot.say("Role '%s' added." % to_add[0])
+                m = await self.bot.say("Role '%s' added." % to_add[0])
             elif to_remove:
-                await self.bot.say("Role '%s' removed." % to_remove[0])
+                m = await self.bot.say("Role '%s' removed." % to_remove[0])
+
+            messages.add(m)
 
         except XORoleException as e:
-            await self.bot.say(warning(*e.args))
+            m = await self.bot.say(warning(*e.args))
+            messages.add(m)
+        finally:
+            delay = self.settings.get(server.id, {}).get('AUTODELETE', 0)
+
+            if delay:
+                coro = self.delete_messages_after(messages, delay)
+                self.bot.loop.create_task(coro)
 
     @commands.group(pass_context=True, no_pm=True)
     async def xoroleset(self, ctx):
@@ -551,6 +604,34 @@ class XORole:
 
         except XORoleException as e:
             await self.bot.say(warning(*e.args))
+
+    @checks.mod_or_permissions(administrator=True)
+    @xoroleset.command(name='autodelete', pass_context=True)
+    async def xoroleset_autodelete(self, ctx, delay: int = None):
+        """Show or set command auto-delete delay.
+
+        Max delay is 60s. 0 to disable, leave blank to show the current setting.
+        """
+        server = ctx.message.server
+        settings = self.get_settings(server)
+
+        if delay is None:
+            delay = settings.get('AUTODELETE', 0)
+
+            if delay:
+                return await self.bot.say("Auto-delete delay is currently %is." % delay)
+            else:
+                return await self.bot.say("Auto-delete is currently disabled.")
+        elif not (0 <= delay <= 60):
+            return await self.bot.send_cmd_help(ctx)
+
+        settings['AUTODELETE'] = delay
+        self.update_settings(server, settings)
+
+        if delay:
+            return await self.bot.say("Auto-delete delay set to %is." % delay)
+        else:
+            return await self.bot.say("Auto-delete disabled.")
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:

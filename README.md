@@ -554,11 +554,13 @@ Calling `[p]xorole [role]` without a valid subcommand is the same as calling `[p
 
 The cog is configured using the following subcommands of `xoroleset`:
 * `addroleset [name]`: creates a new roleset.
+* `audit`: lists members that have more than one role in a xorole roleset.
+* `autodelete [seconds]`: show or set the auto-delete delay for xorole commands and responses.
+  - Max delay 60s. 0 to disable, leave blank to show the current setting.
 * `rmroleset [name]`: deletes a roleset.
 * `renroleset [old_name] [new_name]`: renames a roleset.
-* `addroles [roleset] [role,[role,...]`: Adds a comma-seperated list of roles (or IDs) to a roleset.
-* `rmroles [roleset] [role,[role,...]`: Removes a comma-seperated list of roles (or IDs) from a roleset.
-* `audit`: Lists members that have more than one role in a xorole roleset.
+* `addroles [roleset] [role,[role,...]]`: adds a comma-seperated list of roles (or IDs) to a roleset.
+* `rmroles [roleset] [role,[role,...]]`: removes a comma-seperated list of roles (or IDs) from a roleset.
 
 ## Contributing
 Please submit patches to code or documentation as GitHub pull requests!
