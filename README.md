@@ -289,6 +289,11 @@ It is possible to designate a special channel which punished users are allowed t
 #### Punished user list formatting
 Support for multi-line headers and cells was added in tabluate version 0.8.0. If the installed version is older than that, the formatting for `[p]punish list` will revert to a single-row layout, which can easily overflow and cause ugly formatting. To prevent this, simply update tabulate (a quick shortcut to do so is `[p]debug bot.pip_install('tabulate')`).
 
+#### Absent/banned user cleanup
+If a member leaves before their punishment expires or is removed, they may remain in the list indefinitely. To remove members whose time has expired, use the `[p]punish clean [pending=no]` command. If run with `yes` as the argument, then it will also remove members who are no longer in the server, even if their time has not yet expired. Note that this will prevent the punish role from being re-added if they rejoin.
+
+As of version 2.2.0 (published 2018-12-29), users are automatically removed from the punish list upon being banned, regardless of when their timer expires. To remove users from the list who were banned before the update, use the `[p]punish clean-bans` command.
+
 ### ReCensor
 The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library/re.html) module to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is described [here](https://docs.python.org/3/library/re.html#regular-expression-syntax).
 

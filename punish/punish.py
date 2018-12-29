@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.1.1'
+__version__ = '2.2.0'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -427,6 +427,35 @@ class Punish:
                 count += 1
 
         await self.bot.say('Cleaned %i absent members from the list.' % count)
+
+    @punish.command(pass_context=True, no_pm=True, name='clean-bans')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def punish_clean_bans(self, ctx):
+        """
+        Removes banned members from the punished list.
+        """
+
+        count = 0
+        now = time.time()
+        server = ctx.message.server
+        data = self.json.get(server.id, {})
+
+        try:
+            bans = await self.bot.get_bans(server)
+            ban_ids = {u.id for u in bans}
+        except discord.errors.Forbidden:
+            await self.bot.say(warning("I need ban permissions to see the list of banned users."))
+            return
+
+        for mid, mdata in data.copy().items():
+            if not mid.isdigit() or server.get_member(mid):
+                continue
+
+            elif mid in ban_ids:
+                del(data[mid])
+                count += 1
+
+        await self.bot.say('Cleaned %i banned users from the list.' % count)
 
     @punish.command(pass_context=True, no_pm=True, name='warn')
     @checks.mod_or_permissions(manage_messages=True)
@@ -1245,7 +1274,7 @@ class Punish:
         if member:
             self.bot.loop.create_task(self._unpunish(member))
 
-    async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None) -> bool:
+    async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None, quiet=False) -> bool:
         """
         Remove punish role, delete record and task handle
         """
@@ -1294,6 +1323,9 @@ class Punish:
                     if member.id not in unmute_list:
                         unmute_list.append(member.id)
                     self.save()
+
+            if quiet:
+                return True
 
             msg = 'Your punishment in %s has ended.' % member.server.name
 
@@ -1374,6 +1406,22 @@ class Punish:
             while before.id in unmute_list:
                 unmute_list.remove(before.id)
             self.save()
+
+    async def on_member_ban(self, member):
+        """Remove punishment record when member is banned."""
+        sid = member.server.id
+        data = self.json.get(sid, {})
+        member_data = data.get(member.id)
+
+        if member_data is None:
+            return
+
+        msg = "Punishment ended early due to ban."
+
+        if member_data.get('reason'):
+            msg += '\n\nOriginal reason was: ' + member_data['reason']
+
+        await self._unpunish(member, msg, remove_role=False, update=True, quiet=True)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:
