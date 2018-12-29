@@ -57,7 +57,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '1.2.5'
+__version__ = '1.2.6'
 
 UPDATE_MSG = ("The version of the dice library installed on the bot (%s) is "
               "too old for the requested command. Please ask the bot owner "
@@ -175,7 +175,11 @@ class Dice:
             else:
                 breakdown = dice.utilities.verbose_print(roll)
 
-            pages = list(map(box, pagify(breakdown)))
+            # 5 pages max
+            if len(breakdown) > (1992*5):
+                breakdown = "[breakdown is too many pages long]"
+
+            pages = list(map(box, pagify(breakdown, delims="\n ")))
 
             for page in pages[:-1]:
                 await self.bot.say(page)
