@@ -261,6 +261,8 @@ The cog is configured for the current channel using the following commands:
 
 To show the current settings, run `[p]galset` without a subcommand.
 
+As of v1.6.0, the owner-only `[p]galset vacuum` command was added to purge deleted channels.
+
 ### Punish
 The punish cog automatically sets itself up in most cases. In case some role configurations need to be re-applied, the role needs to be recreated, etc., run `[p]punishset setup`.
 

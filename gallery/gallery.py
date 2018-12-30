@@ -10,7 +10,7 @@ from cogs.utils import checks
 from cogs.utils.dataIO import dataIO
 from cogs.utils.chat_formatting import box, error, warning
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 logger = logging.getLogger("red.gallery")
 
@@ -365,6 +365,24 @@ class Gallery:
 
             self.update_setting(channel, "PIN_EMOTES", emotes)
             await self.bot.say("Updated pin emotes for this channel.")
+
+    @checks.is_owner()
+    @galset.command(pass_context=True, allow_dm=True)
+    async def vacuum(self, ctx):
+        """
+        Removes missing channels from the configuration.
+        """
+
+        count = 0
+
+        for cid in list(self.settings.keys()):
+            if not self.bot.get_channel(cid):
+                self.settings.pop(cid, None)
+
+        if count:
+            self.save()
+
+        await self.bot.say("Cleaned %d channels." % count)
 
     @galset.command(pass_context=True, allow_dm=False)
     async def turn(self, ctx, on_off: bool = None):
