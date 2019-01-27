@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.7.1'
+__version__ = '2.7.2'
 
 logger = logging.getLogger('red.recensor')
 
@@ -850,13 +850,15 @@ class ServerConfig(FilterBase):
         checks = []
         checked = []
 
+        first_msg = next(iter(messages))
+
         if not messages:
             return None, set(), None
         elif list_cache is None:
             list_cache = {}
 
         for f in self.order:
-            if not (f.multi_msg and f.check_meta(messages[-1], list_cache) and f.predicate):
+            if not (f.multi_msg and f.check_meta(first_msg, list_cache) and f.predicate):
                 continue
 
             asciify = f.asciify or (f.asciify is None and self.asciify)
@@ -928,12 +930,12 @@ class ServerConfig(FilterBase):
                     new_wlc.append((match_messages[0].id, match_messages[-1].id))
 
             if matched_message_set and f.mode:
-                wlc_key = (messages[-1].channel.id, messages[-1].author.id)
+                wlc_key = (first_msg.channel.id, first_msg.author.id)
                 to_delete -= matched_message_set
 
                 for start_id, end_id in f.mm_white_lastmatch_cache.get(wlc_key, ()):
                     # The only case we care about: the start of a former match is outside the window, but not the end
-                    if start_id < messages[0].id < end_id:
+                    if start_id < first_msg.id < end_id:
                         for message in itertools.takewhile(lambda m: m.id <= end_id, messages):
                             to_delete.discard(message)
 
@@ -1264,7 +1266,7 @@ class ReCensor:
         self.misc_data = {}
         self._ignore_filters = {}
         self._message_cache = defaultdict(lambda: BoundedOrderedDict(maxlen=MSG_HISTORY_MAX_NUM))
-        self._deleting = set()
+        self._deleted = BoundedOrderedDict(maxlen=MSG_HISTORY_MAX_NUM)
 
         data = dataIO.load_json(JSON_PATH)
         if data.get('_schema_version', 1) < 2:
@@ -2433,7 +2435,7 @@ class ReCensor:
         elif msg is None:
             msg = _filter.flash_msg
             adj = 'currently'
-        elif len(msg) > 512:
+        elif msg and len(msg) > 512:
             return await self.bot.send_cmd_help(ctx)
         elif _filter.flash_msg == msg:
             adj = 'already'
@@ -2445,7 +2447,7 @@ class ReCensor:
         if msg:
             desc = ':\n\n' + msg
         else:
-            desc = 'not set.'
+            desc = 'disabled.'
 
         await self.bot.say('Trigger message for %s is %s %s' % (_filter.name, adj, desc))
 
@@ -3402,7 +3404,7 @@ class ReCensor:
         if not message.channel.permissions_for(server.me).manage_messages:
             return
 
-        self._deleting.add(cache_key)
+        self._deleted[cache_key] = True
         list_cache = {}
         filter_hit, should_delete, match_substr = await settings.check_message(message, list_cache)
 
@@ -3414,15 +3416,12 @@ class ReCensor:
 
             await self.bot.delete_message(message)
             # deleting a message may make a gap
-            popped = message_deque.pop(message.id, None)
+            message_deque.pop(message.id, None)
 
             if filter_hit:
                 await self.post_flash(filter_hit, message, match=match_substr)
 
-        if should_delete and popped:
-            await self.handle_seq(self.settings[server.id], message_deque, list_cache)
-
-        self._deleting.discard(cache_key)
+        await self.handle_seq(self.settings[server.id], message_deque, list_cache)
 
     async def on_message_edit(self, old_message, new_message):
         await self.on_message(new_message, _edit=True)
@@ -3433,20 +3432,18 @@ class ReCensor:
 
         if not (server and self.ready) or message.author == self.bot.user \
                 or server.id not in self.settings or cache_key in self._ignore_filters \
-                or cache_key not in self._message_cache or cache_key in self._deleting:
+                or cache_key not in self._message_cache or cache_key in self._deleted:
             return
 
         message_deque = self._message_cache[cache_key]
         self.cleanup_deque(message_deque)
-        popped = message_deque.pop(message.id, None)
+        message_deque.pop(message.id, None)
 
         if not message.channel.permissions_for(server.me).manage_messages:
             return
 
-        if popped:
-            self._deleting.add(cache_key)
-            await self.handle_seq(self.settings[server.id], message_deque)
-            self._deleting.discard(cache_key)
+        self._deleted[cache_key] = True
+        await self.handle_seq(self.settings[server.id], message_deque)
 
     @staticmethod
     def cleanup_deque(message_deque: BoundedOrderedDict):
