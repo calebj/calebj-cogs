@@ -65,7 +65,7 @@ Rj(Y0|;SU2d?s+MPi6(PPLva(Jw(n0~TKDN@5O)F|k^_pcwolv^jBVTLhNqMQ#x6WU9J^I;wLr}Cut#l
 FU1|1o`VZODxuE?x@^rESdOK`qzRAwqpai|-7cM7idki4HKY>0$z!aloMM7*HJs+?={U5?4IFt""".replace("\n", ""))))
 # End analytics core
 
-__version__ = '2.7.2'
+__version__ = '2.7.3'
 
 logger = logging.getLogger('red.recensor')
 
@@ -1118,7 +1118,12 @@ class Filter(FilterBase):
         if self.roles_list in cache:
             rlr = cache[self.roles_list]
         else:
-            cache[self.roles_list] = rlr = self.roles_list.check_iter(message.author.roles)
+            if isinstance(message.author, discord.Member):
+                role_list = message.author.roles
+            else:  # for webhooks, act as if "user" belongs to default role only
+                role_list = [message.server.default_role]
+
+            cache[self.roles_list] = rlr = self.roles_list.check_iter(role_list)
 
         if rlr is False:
             if debug:

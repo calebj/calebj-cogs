@@ -301,6 +301,8 @@ The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library
 
 **Note for Windows users:** because of OS limitations combined with an [upstream Red issue](https://github.com/Cog-Creators/Red-DiscordBot/pull/1956), a situation called [catastrophic backtracking](https://www.regular-expressions.info/catastrophic.html) can cause your bot to stop responding. On Linux and OSX, the cog uses process-level isolation to prevent this from happening. Once that pull request is merged, Windows users will have the same protection, and this note will be removed.
 
+**Note for webhooks:** although they don't post as a server member, recensor treats them as if they belong to the default (`@everyone`) role for the purposes of role-based filtering.
+
 Most of the configuration will be done with the following commands:
 - `[p]recensor create <name> [pattern]` : creates a new filter
 - `[p]recensor copy <name> <newname> [link]` : Copies an existing filter, with optional link
