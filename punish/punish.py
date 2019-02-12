@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.3.0'
+__version__ = '2.3.1'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -449,7 +449,6 @@ class Punish:
         """
 
         count = 0
-        now = time.time()
         server = ctx.message.server
         data = self.json.get(server.id, {})
 
@@ -1443,12 +1442,12 @@ class Punish:
         sid = before.server.id
         data = self.json.get(sid, {})
         member_data = data.get(before.id)
+        role = await self.get_role(before.server, quiet=True)
 
-        if member_data is None:
+        if not (member_data and role):
             return
 
-        role = await self.get_role(before.server, quiet=True)
-        if role and role in before.roles and role not in after.roles:
+        if role in before.roles and role not in after.roles:
             msg = 'Punishment manually ended early by a moderator/admin.'
             if member_data['reason']:
                 msg += '\nReason was: ' + member_data['reason']
@@ -1458,16 +1457,24 @@ class Punish:
     async def on_member_join(self, member):
         """Restore punishment if punished user leaves/rejoins"""
         sid = member.server.id
-        role = await self.get_role(member.server, quiet=True)
         data = self.json.get(sid, {}).get(member.id)
-        if not role or data is None:
+
+        if not data:
             return
+
+        # give other tools a chance to settle, then re-fetch data just in case
+        await asyncio.sleep(1)
+        member = self.bot.get_server(sid).get_member(member.id)
+        role = await self.get_role(member.server, quiet=True)
 
         until = data['until']
         duration = until - time.time()
-        if duration > 0:
-            await self.bot.add_roles(member, role)
+
+        if role and duration > 0:
             await self.schedule_unpunish(until, member)
+
+            if role not in member.roles:
+                await self.bot.add_roles(member, role)
 
     async def on_voice_state_update(self, before, after):
         data = self.json.get(before.server.id, {})
@@ -1482,8 +1489,10 @@ class Punish:
 
         elif before.id in unmute_list:
             await self.bot.server_voice_state(after, mute=False)
+
             while before.id in unmute_list:
                 unmute_list.remove(before.id)
+
             self.save()
 
     async def on_member_ban(self, member):
