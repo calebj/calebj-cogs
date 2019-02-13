@@ -14,7 +14,7 @@ from random import randint
 from math import ceil
 from collections import defaultdict
 
-__version__ = '2.0.4'
+__version__ = '2.0.5'
 
 log = logging.getLogger("red.scheduler")
 log.setLevel(logging.INFO)
@@ -178,24 +178,20 @@ class Scheduler:
                 e = Event(server=server, **event)
                 self.bot.loop.create_task(self._put_event(e))
 
-    async def _put_event(self, event, fut=None, offset=None):
+    async def _put_event(self, event, fut=None):
+        # compute if absolute time isn't provided
         if fut is None:
             if event.repeat:
                 diff = max(time.time() - event.starttime, 0)
-                fut = ((ceil(diff / event.timedelta) * event.timedelta)
-                       + event.starttime)
+                fut = ((ceil(diff / event.timedelta) * event.timedelta) + event.starttime)
             else:
                 fut = event.starttime + event.timedelta
-
-        if offset:
-            fut += offset
 
         await self.queue.put((fut, event))
 
         log.debug('Added "{}" to the scheduler queue at {}'.format(event.name, fut))
 
-    async def _add_event(self, name, command, dest_server, dest_channel,
-                         author, timedelta, repeat=False, start=None):
+    async def _add_event(self, name, command, dest_server, dest_channel, author, timedelta, repeat=False, start=None):
         if isinstance(dest_server, discord.Server):
             dest_server = dest_server.id
 
@@ -237,6 +233,7 @@ class Scheduler:
 
             while not self.queue.empty():
                 time, event = self.queue.get_nowait()
+
                 if name == event.name and server.id == event.server:
                     removed = (time, event)
                     break
@@ -250,11 +247,13 @@ class Scheduler:
             return None
 
         time, event = removed
+
         if self.pending_by_event[event]:
             for ts in self.pending_by_event[event]:
                 k = (ts, event)
                 self.pending[k].cancel()
                 del self.pending[k]
+
             del self.pending_by_event[event]
 
         return removed
@@ -291,8 +290,7 @@ class Scheduler:
         """
         name1 = ctx.message.author.id + '-' + command1.lower()
         name2 = ctx.message.author.id + '-' + command2.lower()
-        self.dispatch_fake(ctx.message.channel, ctx.message.author.id, name1,
-                           command1)
+        self.dispatch_fake(ctx.message.channel, ctx.message.author.id, name1, command1)
         await self._add_centralized(ctx, name2, time_interval, command2, False)
 
     @scheduler.command(pass_context=True, name="add_twostage_timelast")
@@ -338,8 +336,7 @@ class Scheduler:
         """
         await self._add_centralized(ctx, name, interval, command, True, start_in=start_in)
 
-    async def _add_centralized(self, ctx, name, interval, command,
-                               repeat, start=None, start_in=None):
+    async def _add_centralized(self, ctx, name, interval, command, repeat, start=None, start_in=None):
         channel = ctx.message.channel
         server = ctx.message.server
         author = ctx.message.author
@@ -384,6 +381,7 @@ class Scheduler:
                 msg = warning("An event with that name already exists!")
             else:
                 msg = warning("That command is already scheduled to run!")
+
             await self.bot.say(msg)
             return
 
@@ -394,8 +392,7 @@ class Scheduler:
             logmsg = 'add {} "{}" to {} on {} in {}s'
             msg = 'I will run `{1}` in {2}.'
 
-        log.info(logmsg.format(name, command, channel.name,
-                               server.name, interval, start.timestamp()))
+        log.info(logmsg.format(name, command, channel.name, server.name, interval, start.timestamp()))
 
         await self._add_event(name, command, server, channel, author, interval, repeat, start)
 
@@ -502,14 +499,15 @@ class Scheduler:
             self.pending_by_event[next_event].append(next_time)
 
             if next_event.repeat:
-                await self._put_event(next_event, next_time, next_event.timedelta)
+                # schedule next run
+                await self._put_event(next_event, next_time + next_event.timedelta)
             else:
                 del self.events[next_event.server][next_event.name]
                 self.save_events()
+
             return True
         else:
-            log.debug('Will run {} "{}" in {}s'.format(
-                next_event.name, next_event.command, diff))
+            log.debug('Will run {} "{}" in {}s'.format(next_event.name, next_event.command, diff))
             await self._put_event(next_event, next_time)
             return False
 
@@ -517,6 +515,7 @@ class Scheduler:
         prefixes = self.bot.command_prefix
         if callable(prefixes):
             prefixes = prefixes(self.bot, msg)
+
             if asyncio.iscoroutine(prefixes):
                 prefixes = await prefixes
 
@@ -525,6 +524,7 @@ class Scheduler:
         for p in prefixes:
             if content.startswith(p):
                 return p
+
         return None
 
     async def queue_manager(self):
@@ -565,6 +565,7 @@ class Scheduler:
         else:
             diff_seconds = (now - start).total_seconds()
             delta = _generate_timespec(abs(diff_seconds))
+
             if diff_seconds < 0:
                 return 'in ' + delta
             else:
