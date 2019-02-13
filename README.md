@@ -147,7 +147,7 @@ Admins and members with the Manage Serve permission can run these commands:
 The Duel cog was written as a fun exercise in procedural generation. It only has a few commands:
 
 * `[p]duel <member>` : starts a randomly generated duel with a member
-* `[p]duels list [N=10]` : display the top N entries in the duels leaderboard 
+* `[p]duels list [N=10]` : display the top N entries in the duels leaderboard
 * `[p]protect me` : enable or purchase duel protection (set by admins)
 * `[p]protected` : display a list of all protected members and roles
 * `[p]unprotect me` : opt out of duel protection
@@ -566,6 +566,10 @@ The cog is configured using the following subcommands of `xoroleset`:
 * `audit`: lists members that have more than one role in a xorole roleset.
 * `autodelete [seconds]`: show or set the auto-delete delay for xorole commands and responses.
   - Max delay 60s. 0 to disable, leave blank to show the current setting.
+* `autoswitch [on_off] [rolesets]...`: show or change the autoswitch feature settings.
+  - When autoswitch is on, adding a role from a set without using the xorole command will remove any others in that set.
+  - Run without parameters to show current autoswitch settings.
+  - Both a server default and roleset-specific overrides can be configured.
 * `rmroleset [name]`: deletes a roleset.
 * `renroleset [old_name] [new_name]`: renames a roleset.
 * `addroles [roleset] [role,[role,...]]`: adds a comma-seperated list of roles (or IDs) to a roleset.
