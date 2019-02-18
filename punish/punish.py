@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.2.2'
+__version__ = '2.3.0'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -40,6 +40,7 @@ DEFAULT_ROLE_NAME = 'Punished'
 DEFAULT_TEXT_OVERWRITE = discord.PermissionOverwrite(send_messages=False, send_tts_messages=False, add_reactions=False)
 DEFAULT_VOICE_OVERWRITE = discord.PermissionOverwrite(speak=False)
 DEFAULT_TIMEOUT_OVERWRITE = discord.PermissionOverwrite(send_messages=True, read_messages=True)
+DEFAULT_TIMEOUT_OVERWRITE_HUSH = discord.PermissionOverwrite(send_messages=False, read_messages=True)
 
 QUEUE_TIME_CUTOFF = 30
 
@@ -588,6 +589,48 @@ class Punish:
 
         await self.bot.say(msg)
 
+    @punish.command(pass_context=True, no_pm=True, name='channel-hush')
+    @checks.mod_or_permissions(manage_messages=True)
+    async def punish_channel_hush(self, ctx, on_off: bool = None):
+        """
+        Set or show whether punished members can post in the timeout channel
+
+        For this to work, the channel must be set, and other roles must
+        not conflict. This cog ONLY changes the timeout role overrides.
+
+        Hush is automatically disabled when no more members are punished.
+        """
+        server = ctx.message.server
+        settings = self.json.get(server.id, {})
+        current = settings.get('CHANNEL_HUSH', False)
+        channel = settings.get('CHANNEL_ID')
+        channel = channel and server.get_channel(channel)
+        msg = 'Punished members %s to post in the timeout channel.'
+
+        if on_off is None:
+            on_off = current
+            status = 'are currently '
+        elif on_off == current:
+            status = 'were already '
+        else:
+            if server.id not in self.json:
+                self.json[server.id] = {}
+
+            self.json[server.id]['CHANNEL_HUSH'] = on_off
+            self.save()
+            status = 'are now '
+            role = await self.get_role(server, create=True)
+
+            if channel and role:
+                await self.setup_channel(channel, role)
+            elif not channel:
+                msg = warning('Note: the timeout channel must be set for this to take effect.') + '\n' + msg
+            elif not role:
+                msg = warning('Note: the punished role has not yet been created.') + '\n' + msg
+
+        status += 'unable' if on_off else 'able'
+        await self.bot.say(msg % status)
+
     @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     @checks.admin_or_permissions(administrator=True)
     async def punishset(self, ctx):
@@ -961,7 +1004,10 @@ class Punish:
             # maybe this will be used later:
             # config = settings.get('TIMEOUT_OVERWRITE')
             config = None
-            defaults = DEFAULT_TIMEOUT_OVERWRITE
+            if settings.get('CHANNEL_HUSH', False):
+                defaults = DEFAULT_TIMEOUT_OVERWRITE_HUSH
+            else:
+                defaults = DEFAULT_TIMEOUT_OVERWRITE
         elif channel.type is discord.ChannelType.voice:
             config = settings.get('VOICE_OVERWRITE')
             defaults = DEFAULT_VOICE_OVERWRITE
@@ -1308,6 +1354,21 @@ class Punish:
             # Has to be done first to prevent triggering listeners
             self._unpunish_data(member)
             await self.cancel_queue_event(member.server.id, member.id)
+
+            # No more members punished, lift back channel hush
+            if not any(mid.isdigit() for mid in data):
+                if data.get("CHANNEL_HUSH", False):
+                    data["CHANNEL_HUSH"] = False
+                    self.save()
+
+                    channel = data.get('CHANNEL_ID')
+                    channel = channel and server.get_channel(channel)
+
+                    if channel:
+                        try:
+                            await self.setup_channel(channel, role)
+                        except Exception:
+                            pass
 
             if remove_role:
                 await self.bot.remove_roles(member, role)

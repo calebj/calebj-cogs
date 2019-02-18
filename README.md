@@ -288,6 +288,8 @@ Note: if the voice override does not deny speak or connect permissions to the pu
 
 It is possible to designate a special channel which punished users are allowed to speak in (for example, to discuss their infractions in private with a moderator). When set using `[p]punishset channel [channel]`, the punished role is automatically granted explicit permissions to read and speak in that channel. To view the current channel, run `[p]punishset channel` without any arguments. Or, to revert this setting and restore the normal permission overrides, run `[p]punishset clear-channel`.
 
+If the punished user(s) continue to be disruptive in the timeout channel, moderators can utilize the `[p]punish channel-hush [on_off]` command. When ON, the channel's permissions are changed to prevent them from posting in the channel, but still allow them to read it. This setting automatically resets to OFF when no more punishments are active.
+
 #### Punished user list formatting
 Support for multi-line headers and cells was added in tabluate version 0.8.0. If the installed version is older than that, the formatting for `[p]punish list` will revert to a single-row layout, which can easily overflow and cause ugly formatting. To prevent this, simply update tabulate (a quick shortcut to do so is `[p]debug bot.pip_install('tabulate')`).
 
