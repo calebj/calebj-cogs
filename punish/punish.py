@@ -8,7 +8,6 @@ import os
 import re
 import textwrap
 import time
-import random
 
 from .utils import checks
 from .utils.chat_formatting import pagify, box, warning, error, info, bold
