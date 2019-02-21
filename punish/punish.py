@@ -274,6 +274,19 @@ def getmname(mid, server):
     else:
         return '(absent user #%s)' % mid
 
+def _role_from_string(server, rolename, roles=None):
+    if roles is None:
+        roles = server.roles
+
+    roles = [r for r in roles if r is not None]
+    role = discord.utils.find(lambda r: r.name.lower() == rolename.lower(),
+                              roles)
+    try:
+        log.debug("Role {} found from rolename {}".format(
+            role.name, rolename))
+    except Exception:
+        log.debug("Role not found for rolename {}".format(rolename))
+    return role
 
 class Punish:
     """
@@ -313,20 +326,6 @@ class Punish:
 
         sig = inspect.signature(mod.new_case)
         return 'force_create' in sig.parameters
-
-    def _role_from_string(self, server, rolename, roles=None):
-        if roles is None:
-            roles = server.roles
-
-        roles = [r for r in roles if r is not None]
-        role = discord.utils.find(lambda r: r.name.lower() == rolename.lower(),
-                                  roles)
-        try:
-            log.debug("Role {} found from rolename {}".format(
-                role.name, rolename))
-        except Exception:
-            log.debug("Role not found for rolename {}".format(rolename))
-        return role
 
     @commands.group(pass_context=True, invoke_without_command=True, no_pm=True)
     @checks.mod_or_permissions(manage_messages=True)
@@ -677,7 +676,7 @@ class Punish:
             return
 
         unparsed_roles = list(map(lambda r: r.strip(), rolelist.split(',')))
-        parsed_roles = list(map(lambda r: self._role_from_string(server, r),
+        parsed_roles = list(map(lambda r: _role_from_string(server, r),
                                 unparsed_roles))
 
         if None in parsed_roles:
@@ -1279,7 +1278,7 @@ class Punish:
             removed_parsed_user_roles = []
 
             for remove_role in remove_role_list:
-                parsed_removed_role = self._role_from_string(server, remove_role)
+                parsed_removed_role = _role_from_string(server, remove_role)
                 if parsed_removed_role in user_roles:
                     removed_user_roles.append(remove_role)
                     removed_parsed_user_roles.append(parsed_removed_role)
@@ -1486,7 +1485,7 @@ class Punish:
                         unmute_list.append(member.id)
                     self.save()
             # readd removed roles from user.
-            parsed_roles = [self._role_from_string(server, role) for role in removed_roles if role is not None]
+            parsed_roles = [_role_from_string(server, role) for role in removed_roles if role is not None]
             await self.bot.add_roles(member, *parsed_roles)
 
             if quiet:
