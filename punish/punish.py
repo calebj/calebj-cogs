@@ -713,13 +713,21 @@ class Punish:
 
             # remove roles from user that were added to the list.
             if added_roles:
+                # adds the role id for each newly removed role.
+                for role in added_roles:
+                    if role in user_roles:
+                        prev_removed_roles.append(role.id)
                 user_roles = [role for role in user_roles if role not in added_roles]
 
             # add roles back that were removed from the list
             readd_roles = [role for role in deleted_roles if role.id in prev_removed_roles]
+            # remove the now added roles from the user's removed roles by the bot
+            for role in readd_roles:
+                prev_removed_roles.remove(role.id)
+
             user_roles.extend(readd_roles)
             # update new removed roles for member in punish's saved data:
-            self.json[server.id][member.id]['removed_roles'] = [role for role in prev_removed_roles if role in parsed_role_set]
+            self.json[server.id][member.id]['removed_roles'] = prev_removed_roles
 
             await self.bot.replace_roles(member, *user_roles)
 
