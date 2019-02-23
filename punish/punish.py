@@ -29,7 +29,7 @@ except ImportError:
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
 
-__version__ = '2.3.1'
+__version__ = '2.4.0'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -266,6 +266,7 @@ def format_permissions(permissions, include_null=False):
     else:
         return "No permission entries."
 
+
 def getmname(mid, server):
     member = discord.utils.get(server.members, id=mid)
 
@@ -274,20 +275,76 @@ def getmname(mid, server):
     else:
         return '(absent user #%s)' % mid
 
+
 def _role_from_string(server, rolename, roles=None):
     if roles is None:
         roles = server.roles
+    else:
+        roles = [r for r in roles if isinstance(r, discord.Role)]
 
-    roles = [r for r in roles if r is not None]
-    role = discord.utils.find(lambda r: r.name.lower() == rolename.lower(), roles)
-    # if couldnt find by role name, try to find by role id
-    if role is None:
-        role = discord.utils.find(lambda r: r.id == rolename, roles)
+    if rolename.isdigit():
+        role = discord.utils.get(roles, id=rolename)
+
+        if role:
+            log.debug("Role {} found from ID {}".format(role.name, rolename))
+            return role
+
+    rolename = rolename.lower()
+    role = discord.utils.find(lambda r: r.name.lower() == rolename, roles)
+
     try:
         log.debug("Role {} found from rolename {}".format(role.name, rolename))
     except Exception:
         log.debug("Role not found for rolename {}".format(rolename))
+
     return role
+
+
+def _resolve_role_list(server: discord.Server, roles: list) -> list:
+    gen = (_role_from_string(server, name) for name in roles)
+    return list(filter(None, gen))
+
+
+class Memoizer:
+    """
+    General purpose cache for function results. Appends positional args, overlays kwargs. Both must be hashable.
+    """
+    __slots__ = ['_cache', '_func', '_args', '_kwargs']
+
+    def __init__(self, func, *args, **kwargs):
+        self._cache = {}
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    def clear(self):
+        "clears the internal arg -> result cache"
+        self._cache.clear()
+
+    def filter(self, iterable, *, skip_nulls=False):
+        "Calls the function on each item in the passed iterable. Only one positional arg at a time is supported."
+        gen = map(self, iterable)
+
+        if skip_nulls:
+            return filter(None, gen)
+        else:
+            return gen
+
+    def __call__(self, *args, **kwargs):
+        if kwargs:
+            key = (*args, tuple(kwargs.items()))
+            call_kwargs = self._kwargs.copy()
+            call_kwargs.update(kwargs)
+        else:
+            key = args
+            call_kwargs = self._kwargs
+
+        try:
+            return self._cache[key]
+        except KeyError:
+            ret = self._cache[key] = self._func(*self._args, *args, **call_kwargs)
+            return ret
+
 
 class Punish:
     """
@@ -512,8 +569,7 @@ class Punish:
         server = user.server
         now = time.time()
         data = self.json.get(sid, {}).get(user.id, {})
-        removed_roles = data.get('removed_roles', [])
-        removed_roles_parsed = [_role_from_string(server, role) for role in removed_roles]
+        removed_roles_parsed = _resolve_role_list(server, data.get('removed_roles', []))
 
         if role and role in user.roles:
             msg = 'Punishment manually ended early by %s.' % ctx.message.author
@@ -536,11 +592,12 @@ class Punish:
             if data.get('reason'):
                 msg += '\n\nOriginal reason was: ' + data['reason']
 
+            if removed_roles_parsed:
+                names_list = format_list(*(r.name for r in removed_roles_parsed))
+                msg += "\nRestored role(s): {}".format(names_list)
+
             if not await self._unpunish(user, msg, update=True):
                 msg += '\n\n(failed to send punishment end notification DM)'
-
-            if removed_roles:
-                msg += "\nRestored roles: {}".format(list(role.name for role in removed_roles_parsed if role is not None))
 
             await self.bot.say(msg)
         elif data:  # This shouldn't happen, but just in case
@@ -655,9 +712,10 @@ class Punish:
         if ctx.invoked_subcommand is None:
             await self.bot.send_cmd_help(ctx)
 
-    @punishset.command(pass_context=True, name="remove_role_list")
+    @punishset.command(pass_context=True, name="remove-roles")
     async def punishset_remove_role_list(self, ctx, *, rolelist=None):
         """Set what roles to remove when punishing.
+
         COMMA SEPARATED LIST (e.g. Admin,Staff,Mod), Can also use role IDs as well.
 
         To get current remove role list, run command with no roles.
@@ -665,76 +723,142 @@ class Punish:
         Add role_list_clear as the role to clear the server's remove role list.
         """
         server = ctx.message.server
-        roles = self.json.get(server.id, {}).get("REMOVE_ROLE_LIST", [])
+        current_roles = _resolve_role_list(server, self.json.get(server.id, {}).get("REMOVE_ROLE_LIST", []))
+
         if rolelist is None:
-            if roles:
-                parsed_roles = [_role_from_string(server, role) for role in roles]
-                await self.bot.say("List of roles to remove when punishing: {}".format(list(role.name for role in parsed_roles if role is not None)))
+            if current_roles:
+                names_list = format_list(*(r.name for r in current_roles))
+                await self.bot.say("Current list of roles removed when a user is punished: {}".format(names_list))
             else:
                 await self.bot.say("No roles defined for removal.")
             return
-        elif "role_list_clear" in rolelist:
+        elif "role_list_clear" in rolelist.lower():
             await self.bot.say("Remove role list cleared.")
             self.json[server.id]["REMOVE_ROLE_LIST"] = []
             self.save()
             return
 
-        unparsed_roles = list(map(lambda r: r.strip(), rolelist.split(',')))
-        parsed_roles = list(map(lambda r: _role_from_string(server, r), unparsed_roles))
-        everyone_role = server.default_role
+        found_roles = set()
+        notfound_names = set()
+        punish_role = await self.get_role(server, quiet=True)
 
-        if None in parsed_roles:
-            not_found = set(unparsed_roles) - {r.name for r in parsed_roles if r is not None}
-            await self.bot.say("These roles were not found: {}\n\nPlease try again.".format(not_found))
-            return
-        if everyone_role.name in unparsed_roles or everyone_role.id in unparsed_roles:
-            await self.bot.say("The everyone role cannot be added.\n\nPlease try again.")
-            return
+        for lookup in rolelist.split(","):
+            lookup = lookup.strip()
+            role = _role_from_string(server, lookup)
 
-        parsed_role_set = list({r.id for r in parsed_roles})
+            if role:
+                found_roles.add(role)
+            else:
+                notfound_names.add(lookup)
 
-        # check all current users who are punished and update removed Roles
-        # will add roles if removed from list, and remove new roles added to list
-        data = self.json.get(server.id, {})
-        deleted_roles = [_role_from_string(server, role) for role in roles if role not in parsed_role_set]
-        # check to make sure deleted roles from the list still exist in server
-        deleted_roles = [role for role in deleted_roles if role is not None]
-        added_roles = [_role_from_string(server, role) for role in parsed_role_set if role not in roles]
-        added_roles = [role for role in added_roles if role is not None]
-        punished_members = [member for member in server.members if member.id in data]
-        if punished_members:
-            update_msg = "\n\nAll currently punished users' roles have been updated."
+        if notfound_names:
+            fmt_list = format_list(*("`{}`".format(x) for x in notfound_names))
+            await self.bot.say(warning("These roles were not found: {}\n\nPlease try again.".format(fmt_list)))
+        elif punish_role and punish_role in found_roles:
+            await self.bot.say(warning("The punished role cannot be removed.\n\nPlease try again."))
+        elif server.default_role in found_roles:
+            await self.bot.say(warning("The everyone role cannot be removed.\n\nPlease try again."))
+        elif found_roles == set(current_roles):
+            await self.bot.say("No changes to make.")
         else:
-            update_msg = ""
+            if server.id not in self.json:
+                self.json[server.id] = {}
+            elif any(x.isdigit() for x in self.json[server.id]):
+                extra = "\n\nRun `{}punishset sync-roles` to apply the changes to punished members.".format(ctx.prefix)
+            else:
+                extra = ""
 
-        for member in punished_members:
-            user_roles = member.roles
-            prev_removed_roles = self.json[server.id][member.id]['removed_roles']
+            too_high = {r for r in found_roles if r > server.me.top_role}
 
-            # remove roles from user that were added to the list.
-            if added_roles:
-                # adds the role id for each newly removed role.
-                for role in added_roles:
-                    if role in user_roles:
-                        prev_removed_roles.append(role.id)
-                user_roles = [role for role in user_roles if role not in added_roles]
+            if too_high:
+                fmt_list = format_list(*(r.name for r in too_high))
+                extra += "\n\n" + warning(
+                    "These roles are too high for me to manage, and cannot be autoremoved until "
+                    "they are moved under my highest role ({}): {}.".format(server.me.top_role, fmt_list)
+                )
 
-            # add roles back that were removed from the list
-            readd_roles = [role for role in deleted_roles if role.id in prev_removed_roles]
-            # remove the now added roles from the user's removed roles by the bot
-            for role in readd_roles:
-                prev_removed_roles.remove(role.id)
+            self.json[server.id]["REMOVE_ROLE_LIST"] = [r.id for r in found_roles]
+            self.save()
 
-            user_roles.extend(readd_roles)
-            # update new removed roles for member in punish's saved data:
-            self.json[server.id][member.id]['removed_roles'] = prev_removed_roles
+            fmt_list = format_list(*(r.name for r in found_roles))
+            await self.bot.say("Will remove these roles when a user is punished: {}.{}".format(fmt_list, extra))
 
-            await self.bot.replace_roles(member, *user_roles)
+    @punishset.command(pass_context=True, name="sync-roles")
+    async def punishset_sync_roles(self, ctx):
+        """
+        Applies the remove-roles list to all punished users
 
-        self.json[server.id]["REMOVE_ROLE_LIST"] = parsed_role_set
-        self.save()
+        This operation may take some time to complete, depending on the number of members.
+        """
+        server = ctx.message.server
+        server_data = self.json.get(server.id, {})
+        role_memo = Memoizer(_role_from_string, server)
+        highest_role = server.me.top_role
+        count = 0
+        errors = 0
 
-        await self.bot.say("Remove roles successfully set to: {}{}".format(list({r.name for r in parsed_roles}), update_msg))
+        if not server.me.server_permissions.manage_roles:
+            await self.bot.say(error("I need the Manage Roles permission to do that."))
+            return
+
+        # (re)populate the member cache
+        await self.bot.request_offline_members(server)
+
+        # Get current set of roles to remove
+        server_remove_roles = set(role_memo.filter(server_data.get('REMOVE_ROLE_LIST', ()), skip_nulls=True))
+
+        # Iterate through a copy in case the underlying data changes under us,
+        # but check for key presence in the original so we don't act on stale info
+        for member_id, member_data in server_data.copy().items():
+            if not (member_id.isdigit() and member_id in server_data):
+                continue
+
+            member = server.get_member(member_id)
+
+            if not member:
+                continue
+
+            member_roles = set(member.roles)
+            original_roles = member_roles.copy()
+
+            try:
+                # Combine sets to get the baseline (roles they'd have normally)
+                member_roles |= set(role_memo.filter(member_data['removed_roles'], skip_nulls=True))
+            except KeyError:
+                pass
+
+            # update new removed roles with intersection of server removal list and baseline
+            new_removed = server_remove_roles & member_roles
+            server_data[member.id]['removed_roles'] = [r.id for r in new_removed]
+
+            member_roles -= server_remove_roles
+
+            # can't restore, so skip (remove from set)
+            for role in (member_roles - original_roles):
+                if role >= highest_role:
+                    member_roles.discard(role)
+
+            # can't remove, so skip (re-add to set)
+            for role in (original_roles - member_roles):
+                if role >= highest_role:
+                    member_roles.add(role)
+
+            # Now update roles if we need to
+            if member_roles != original_roles:
+                try:
+                    await self.bot.replace_roles(member, *member_roles)
+                except Exception:
+                    log.exception("Couldn't modify roles in sync-roles command in {}!".format(server.name))
+                    errors += 1
+                else:
+                    count += 1
+
+        msg = "Updated {} members' roles.".format(count)
+
+        if errors:
+            msg += "\n" + warning("{} errors occured; check the bot logs for more information.".format(errors))
+
+        await self.bot.say(msg)
 
     @punishset.command(pass_context=True, no_pm=True, name='setup')
     async def punishset_setup(self, ctx):
@@ -1139,8 +1263,10 @@ class Punish:
                 log.error("Needed to create punish role in %s, but couldn't." % server.name)
                 continue
 
+            role_memo = Memoizer(_role_from_string, server)
+
             for member_id, data in members.copy().items():
-                if not member_id.isdigit():
+                if not (member_id.isdigit() and member_id in members):
                     continue
 
                 until = data['until']
@@ -1156,14 +1282,24 @@ class Punish:
                         await self._unpunish(member, reason)
                     else:  # member disappeared
                         del(self.json[server.id][member_id])
-
                 elif member:
-                    if role not in member.roles:
+                    # re-check roles
+                    user_roles = set(member.roles)
+                    removed_roles = set(role_memo.filter(data.get('removed_roles', ()), skip_nulls=True))
+                    removed_roles = user_roles & {r for r in removed_roles if r < me.top_role}
+                    user_roles -= removed_roles
+
+                    apply_roles = removed_roles
+
+                    if role not in user_roles:
                         if role >= me.top_role:
                             log.error("Needed to re-add punish role to %s in %s, but couldn't." % (member, server.name))
-                            continue
+                        else:
+                            user_roles.add(role)  # add punish role to the set
+                            apply_roles = True
 
-                        await self.bot.add_roles(member, role)
+                    if apply_roles:
+                        await self.bot.replace_roles(member, *user_roles)
 
                     if until:
                         await self.schedule_unpunish(until, member)
@@ -1263,11 +1399,11 @@ class Punish:
         updating_case = False
         case_error = None
         mod = self.bot.get_cog('Mod')
-        remove_role_list = self.json[server.id].get("REMOVE_ROLE_LIST", [])
 
         if server.id not in self.json:
             self.json[server.id] = {}
 
+        remove_role_set = set(_resolve_role_list(server, self.json[server.id].get("REMOVE_ROLE_LIST", [])))
         current = self.json[server.id].get(member.id, {})
         reason = reason or current.get('reason')  # don't clear if not given
         hierarchy_allowed = ctx.message.author.top_role > member.top_role
@@ -1300,10 +1436,10 @@ class Punish:
                 return False
 
         role = await self.get_role(server, quiet=quiet, create=True)
+
         if role is None:
             return
-
-        if role >= server.me.top_role:
+        elif role >= server.me.top_role:
             await self.bot.say('The %s role is too high for me to manage.' % role)
             return
 
@@ -1311,26 +1447,6 @@ class Punish:
         now = time.time()
         until = (now + duration + 0.5) if duration else None
         duration_ok = (case_min_length is not None) and ((duration is None) or duration >= case_min_length)
-
-        if member.id not in self.json[server.id]:
-            # remove all roles from user that are specified in remove_role_list, only if its a new punish
-            user_roles = member.roles
-            removed_user_roles = []
-            removed_parsed_user_roles = []
-
-            for remove_role in remove_role_list:
-                parsed_removed_role = _role_from_string(server, remove_role)
-                if parsed_removed_role in user_roles:
-                    removed_user_roles.append(remove_role)
-                    removed_parsed_user_roles.append(parsed_removed_role)
-
-            replace_roles = [r_role for r_role in user_roles if r_role not in removed_parsed_user_roles]
-            #add punish role to list
-            replace_roles.append(role)
-            await self.bot.replace_roles(member, *replace_roles)
-        else:
-            removed_user_roles = self.json[server.id][member.id].get('removed_roles', [])
-            removed_parsed_user_roles = [_role_from_string(server, r_role) for r_role in removed_user_roles]
 
         if mod and self.can_create_cases() and duration_ok and ENABLE_MODLOG:
             mod_until = until and datetime.utcfromtimestamp(until)
@@ -1409,8 +1525,29 @@ class Punish:
 
         overwrite_denies_speak = (voice_overwrite.speak is False) or (voice_overwrite.connect is False)
 
-        if removed_user_roles:
-            msg += "\nRemoved roles: {}".format(list(role.name for role in removed_parsed_user_roles if role is not None))
+        # remove all roles from user that are specified in remove_role_list, only if its a new punish
+        if member.id not in self.json[server.id]:
+            user_roles = set(member.roles)
+
+            # build lists of roles that *should* be removed and ones that *can* be
+            removed_roles = user_roles & remove_role_set
+            too_high_to_remove = {r for r in removed_roles if r >= server.me.top_role}
+            user_roles -= (removed_roles - too_high_to_remove)
+            user_roles.add(role)  # add punish role to the set
+            await self.bot.replace_roles(member, *user_roles)
+        else:
+            removed_roles = set(_resolve_role_list(server, current.get('removed_roles', [])))
+            too_high_to_remove = {r for r in removed_roles if r >= server.me.top_role}
+
+        if removed_roles:
+            actually_removed = removed_roles - too_high_to_remove
+            if actually_removed:
+                msg += "\nRemoved roles: {}".format(format_list(*(r.name for r in actually_removed)))
+
+            if too_high_to_remove:
+                fmt_list = format_list(*(r.name for r in removed_roles))
+                msg += "\n" + warning("These roles were too high to remove (fix hierarchy, then run "
+                                      "`{}punishset sync-roles`): {}".format(ctx.prefix, fmt_list))
 
         self.json[server.id][member.id] = {
             'start'  : current.get('start') or now,  # don't override start time if updating
@@ -1419,7 +1556,7 @@ class Punish:
             'reason' : reason,
             'unmute' : overwrite_denies_speak and not member.voice.mute,
             'caseno' : case_number,
-            'removed_roles' : removed_user_roles
+            'removed_roles' : [r.id for r in removed_roles]
         }
 
         if member.voice_channel and overwrite_denies_speak:
@@ -1460,7 +1597,7 @@ class Punish:
             self.bot.loop.create_task(self.bot.request_offline_members(server))
             return False
 
-    async def _unpunish(self, member, reason=None, remove_role=True, update=False, moderator=None, quiet=False) -> bool:
+    async def _unpunish(self, member, reason=None, apply_roles=True, update=False, moderator=None, quiet=False) -> bool:
         """
         Remove punish role, delete record and task handle
         """
@@ -1472,7 +1609,7 @@ class Punish:
             member_data = data.get(member.id, {})
             caseno = member_data.get('caseno')
             mod = self.bot.get_cog('Mod')
-            removed_roles = member_data.get('removed_roles', [])
+            removed_roles = set(_resolve_role_list(server, member_data.get('removed_roles', [])))
 
             # Has to be done first to prevent triggering listeners
             self._unpunish_data(member)
@@ -1493,13 +1630,14 @@ class Punish:
                         except Exception:
                             pass
 
-            if remove_role:
-                # readd removed roles from user, by replacing user's roles with all of their roles minus the punish role and their removed roles
-                user_roles = member.roles
-                user_roles.remove(role)
-                parsed_roles = [_role_from_string(server, role) for role in removed_roles if role is not None]
-                user_roles.extend(parsed_roles)
-
+            if apply_roles:
+                # readd removed roles from user, by replacing user's roles with all of their roles plus the ones that
+                # were removed (and can be re-added), minus the punish role
+                user_roles = set(member.roles)
+                too_high_to_restore = {r for r in removed_roles if r >= server.me.top_role}
+                removed_roles -= too_high_to_restore
+                user_roles |= removed_roles
+                user_roles.discard(role)
                 await self.bot.replace_roles(member, *user_roles)
 
             if update and caseno and mod:
@@ -1541,7 +1679,12 @@ class Punish:
                 msg += "\nReason: %s" % reason
 
             if removed_roles:
-                msg += "\nRestored roles: {}".format(list(role.name for role in parsed_roles if role is not None))
+                msg += "\n\nRestored roles: {}.".format(format_list(*(r.name for r in removed_roles)))
+
+                if too_high_to_restore:
+                    fmt_list = format_list(*(r.name for r in too_high_to_restore))
+                    msg += "\n" + warning("These roles were too high for me to restore: {}. "
+                                          "Ask a mod for help.".format(fmt_list))
 
             try:
                 await self.bot.send_message(member, msg)
@@ -1572,20 +1715,30 @@ class Punish:
 
     async def on_member_update(self, before, after):
         """Remove scheduled unpunish when manually removed"""
-        sid = before.server.id
-        data = self.json.get(sid, {})
-        member_data = data.get(before.id)
-        role = await self.get_role(before.server, quiet=True)
-
-        if not (member_data and role):
+        try:
+            server_data = self.json[before.server.id]
+            member_data = server_data[before.id]
+            assert before.roles != after.roles
+            role = await self.get_role(before.server, quiet=True)
+            assert role
+        except (KeyError, AssertionError):
             return
 
-        if role in before.roles and role not in after.roles:
+        new_roles = {role.id: role for role in after.roles}
+
+        if role in before.roles and role.id not in new_roles:
             msg = 'Punishment manually ended early by a moderator/admin.'
+
             if member_data['reason']:
                 msg += '\nReason was: ' + member_data['reason']
 
-            await self._unpunish(after, msg, remove_role=False, update=True)
+            await self._unpunish(after, msg, update=True)
+        else:
+            to_remove = {new_roles.get(role_id) for role_id in member_data.get('removed_roles', [])}
+            to_remove = [r for r in to_remove if r and r < after.server.me.top_role]
+
+            if to_remove:
+                await self.bot.remove_roles(after, *to_remove)
 
     async def on_member_join(self, member):
         """Restore punishment if punished user leaves/rejoins"""
@@ -1642,7 +1795,7 @@ class Punish:
         if member_data.get('reason'):
             msg += '\n\nOriginal reason was: ' + member_data['reason']
 
-        await self._unpunish(member, msg, remove_role=False, update=True, quiet=True)
+        await self._unpunish(member, msg, apply_roles=False, update=True, quiet=True)
 
     async def on_command(self, command, ctx):
         if ctx.cog is self and self.analytics:

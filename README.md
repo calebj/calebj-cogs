@@ -298,6 +298,23 @@ If a member leaves before their punishment expires or is removed, they may remai
 
 As of version 2.2.0 (published 2018-12-29), users are automatically removed from the punish list upon being banned, regardless of when their timer expires. To remove users from the list who were banned before the update, use the `[p]punish clean-bans` command.
 
+#### Role Auto-Removal
+As of version 2.4.0 (published 2019-02-23), administrators can define a list of roles to be automatically removed when a user is punished and re-added when it ends. Two commands control this feature:
+- `[p]punishset remove-roles role1,role2,...,roleN` : Set the list of roles to auto-remove. Comma seperated.
+  - If no roles are provided, the current list is displayed.
+  - Role IDs can be used in place of names.
+  - The special value of `role_list_clear` will clear the list.
+- `[p]punishset sync-roles` : Apply changes to the auto-remove list to all currently punished users.
+  - This command should also be used after correcting a hierarchy issue that prevented the bot from removing a role.
+
+The bot will also automatically revert any attempt to re-add a role in a user's "removed" list while a punishment is active, even if the role was added while the bot was offline. Changing the server-wide list will not take effect for a member until you run `sync-roles`.
+
+Roles that are moved too high in the hierarchy for the bot to manage will be silently ignored until the hierarchy is corrected. Running `sync-roles` will scan for any roles that should have been removed and do so.
+
+IMPORTANT: Punish doesn't (currently) handle the case when a member leaves and rejoins *after* their time expires. Since data on expired cases for absent members isn't retained, their roles will have to be re-added manually.
+
+Credit to @brandons209 for this feature idea and implementation.
+
 ### ReCensor
 The recensor cog uses Python's built-in [`re`](https://docs.python.org/3/library/re.html) module to decide which messages to filter. An introduction to Python regex can be found [here](https://docs.python.org/3/howto/regex.html#regex-howto), and the full syntax is described [here](https://docs.python.org/3/library/re.html#regular-expression-syntax).
 
