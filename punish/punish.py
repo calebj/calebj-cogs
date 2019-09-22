@@ -1,17 +1,17 @@
 import asyncio
-from datetime import datetime
-import discord
-from discord.ext import commands
 import inspect
 import logging
 import os
 import re
 import textwrap
 import time
+from datetime import datetime
 
-from .utils import checks
-from .utils.chat_formatting import pagify, box, warning, error, info, bold
-from .utils.dataIO import dataIO
+import discord
+from cogs.utils import checks
+from cogs.utils.chat_formatting import pagify, box, warning, error, info, bold
+from cogs.utils.dataIO import dataIO
+from discord.ext import commands
 
 try:
     import tabulate
@@ -22,14 +22,15 @@ except ImportError as e:
 log = logging.getLogger('red.punish')
 
 try:
-    from .mod import CaseMessageNotFound, NoModLogAccess
+    from cogs.mod import CaseMessageNotFound, NoModLogAccess
     ENABLE_MODLOG = True
 except ImportError:
     log.warn("Could not import modlog exceptions from mod cog, most likely because mod.py was deleted or Red is out of "
              "date. Modlog integration will be disabled.")
     ENABLE_MODLOG = False
+    CaseMessageNotFound = NoModLogAccess = Exception
 
-__version__ = '2.4.0'
+__version__ = '2.4.1'
 
 ACTION_STR = "Timed mute \N{HOURGLASS WITH FLOWING SAND} \N{SPEAKER WITH CANCELLATION STROKE}"
 PURGE_MESSAGES = 1  # for cpunish
@@ -174,7 +175,7 @@ def format_list(*items, join='and', delim=', '):
         return ''
 
 
-def permissions_for_roles(channel, *roles):
+def permissions_for_roles(channel: discord.Channel, *roles: discord.Role):
     """
     Calculates the effective permissions for a role or combination of roles.
     Naturally, if no roles are given, the default role's permissions are used
@@ -196,6 +197,7 @@ def permissions_for_roles(channel, *roles):
     allows = 0
 
     # Apply channel specific role permission overwrites
+    # noinspection PyProtectedMember
     for overwrite in channel._permission_overwrites:
         # Handle default role first, if present
         if overwrite.id == default.id:
@@ -318,11 +320,11 @@ class Memoizer:
         self._kwargs = kwargs
 
     def clear(self):
-        "clears the internal arg -> result cache"
+        """clears the internal arg -> result cache"""
         self._cache.clear()
 
     def filter(self, iterable, *, skip_nulls=False):
-        "Calls the function on each item in the passed iterable. Only one positional arg at a time is supported."
+        """Calls the function on each item in the passed iterable. Only one positional arg at a time is supported."""
         gen = map(self, iterable)
 
         if skip_nulls:
@@ -546,9 +548,11 @@ class Punish:
         Warns a user with boilerplate about the rules
         """
 
-        msg = ['Hey %s, ' % user.mention]
-        msg.append("you're doing something that might get you muted if you keep "
-                   "doing it.")
+        msg = [
+            'Hey %s, ' % user.mention,
+            "you're doing something that might get you muted if you keep doing it."
+        ]
+
         if reason:
             msg.append(" Specifically, %s." % reason)
 
@@ -761,12 +765,12 @@ class Punish:
         elif found_roles == set(current_roles):
             await self.bot.say("No changes to make.")
         else:
+            extra = ""
+
             if server.id not in self.json:
                 self.json[server.id] = {}
             elif any(x.isdigit() for x in self.json[server.id]):
                 extra = "\n\nRun `{}punishset sync-roles` to apply the changes to punished members.".format(ctx.prefix)
-            else:
-                extra = ""
 
             too_high = {r for r in found_roles if r > server.me.top_role}
 
@@ -875,7 +879,7 @@ class Punish:
             role = discord.utils.get(server.roles, name=default_name)
 
         perms = server.me.server_permissions
-        if not perms.manage_roles and perms.manage_channels:
+        if not (perms.manage_roles and perms.manage_channels):
             await self.bot.say("I need the Manage Roles and Manage Channels permissions for that command to work.")
             return
 
@@ -998,7 +1002,6 @@ class Punish:
         current = current and server.get_channel(current)
 
         if current:
-            msg = None
             self.json[server.id]['CHANNEL_ID'] = None
             self.save()
 
@@ -1165,6 +1168,7 @@ class Punish:
 
             else:
                 msg = "The %s role doesn't exist; Creating it now..." % default_name
+                msgobj = None
 
                 if not quiet:
                     msgobj = await self.bot.reply(msg)
@@ -1447,6 +1451,7 @@ class Punish:
         now = time.time()
         until = (now + duration + 0.5) if duration else None
         duration_ok = (case_min_length is not None) and ((duration is None) or duration >= case_min_length)
+        case_number = None
 
         if mod and self.can_create_cases() and duration_ok and ENABLE_MODLOG:
             mod_until = until and datetime.utcfromtimestamp(until)
@@ -1470,8 +1475,6 @@ class Punish:
                                                      force_create=True)
             except Exception as e:
                 case_error = e
-        else:
-            case_number = None
 
         subject = 'the %s role' % role.name
 
@@ -1559,7 +1562,7 @@ class Punish:
             'removed_roles' : [r.id for r in removed_roles]
         }
 
-        if member.voice_channel and overwrite_denies_speak:
+        if member.voice.voice_channel and overwrite_denies_speak:
             await self.bot.server_voice_state(member, mute=True)
 
         self.save()
@@ -1603,6 +1606,7 @@ class Punish:
         """
         server = member.server
         role = await self.get_role(server, quiet=True)
+        too_high_to_restore = set()
 
         if role:
             data = self.json.get(member.server.id, {})
